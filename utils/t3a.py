@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch
-from knn_cuda import KNN
+# from knn_cuda import KNN
+from pytorch3d.ops import knn_points  # pytorch3d
 from utils import misc
 
 
@@ -20,7 +21,7 @@ class Group(nn.Module):
         super().__init__()
         self.num_group = num_group
         self.group_size = group_size
-        self.knn = KNN(k=self.group_size, transpose_mode=True)
+        # self.knn = KNN(k=self.group_size, transpose_mode=True)
 
     def forward(self, xyz):
         '''
@@ -33,8 +34,8 @@ class Group(nn.Module):
         # fps the centers out
         center = misc.fps(xyz, self.num_group)  # B G 3    sample 128 center points from 2048 points
         # knn to get the neighborhood
-        _, idx = self.knn(xyz,
-                          center)  # B G M,   kNN samples for each center  idx (B, M, G)   every center has G (group size) NN points
+        # _, idx = self.knn(xyz, center) # B G M
+        idx = knn_points(center, xyz, K=self.group_size)[1]  # pytorch3d        
         assert idx.size(1) == self.num_group
         assert idx.size(2) == self.group_size
         idx_base = torch.arange(0, batch_size, device=xyz.device).view(-1, 1, 1) * num_points  # idx_base  (8, 1, 1)

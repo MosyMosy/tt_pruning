@@ -9,8 +9,28 @@ from utils import misc
 from utils.checkpoint import get_missing_parameters_message, get_unexpected_parameters_message
 from utils.logger import *
 import random
-from knn_cuda import KNN
-from extensions.chamfer_dist import ChamferDistanceL1, ChamferDistanceL2
+# from knn_cuda import KNN
+from pytorch3d.ops import knn_points  # pytorch3d
+
+# from extensions.chamfer_dist import ChamferDistanceL1, ChamferDistanceL2
+from pytorch3d.loss import chamfer_distance  # pytorch3d
+from functools import partial
+
+
+class ChamferDistanceL1(torch.nn.Module):  # pytorch3d
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x, y):
+        return chamfer_distance(x, y, norm=1)[0]
+
+
+class ChamferDistanceL2(torch.nn.Module):  # pytorch3d
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x, y):
+        return chamfer_distance(x, y, norm=2)[0]
 
 
 class Encoder(nn.Module):  ## Embedding module
@@ -59,7 +79,7 @@ class Group(nn.Module):
         super().__init__()
         self.num_group = num_group
         self.group_size = group_size
-        self.knn = KNN(k=self.group_size, transpose_mode=True)
+        # self.knn = KNN(k=self.group_size, transpose_mode=True)
 
     def forward(self, xyz):
         '''
@@ -76,8 +96,8 @@ class Group(nn.Module):
         # fps the centers out
         center = misc.fps(xyz, self.num_group)  # B G 3    sample 128 center points from 2048 points
         # knn to get the neighborhood
-        _, idx = self.knn(xyz,
-                          center)  # B G M,   kNN samples for each center  idx (B, M, G)   every center has G (group size) NN points
+        # _, idx = self.knn(xyz, center)  # B G M,   kNN samples for each center  idx (B, M, G)   every center has G (group size) NN points
+        idx = knn_points(center, xyz, K=self.group_size)[1]  # pytorch3d
         assert idx.size(1) == self.num_group
         assert idx.size(2) == self.group_size
         idx_base = torch.arange(0, batch_size, device=xyz.device).view(-1, 1, 1) * num_points  # idx_base  (8, 1, 1)
