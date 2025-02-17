@@ -169,3 +169,12 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+
+
+# custom ignore
+
+checkpoints/
+intermediate_features/
+results_final_tta/
+experiments/

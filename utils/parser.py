@@ -10,12 +10,12 @@ def get_args():
     parser.add_argument('--batch_size_tta', type=int, default=48)
     parser.add_argument('--stride_step', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=1)
-    parser.add_argument('--grad_steps', type=int, default=20)
+    parser.add_argument('--grad_steps', type=int, default=1)
     parser.add_argument('--disable_bn_adaptation', action='store_true', help='to disable bn_for adaptation')
-    parser.add_argument('--online', action='store_true', help='online-adapt')
+    parser.add_argument('--online', action='store_true', default=True, help='online-adapt')
     parser.add_argument('--visualize_data', action='store_true', help='image creation')
-    parser.add_argument('--ckpts', type=str, default=None, help='test used ckpt path')
-    parser.add_argument('--config', type=str, help='yaml config file')
+    parser.add_argument('--ckpts', type=str, default="checkpoints/modelnet_src_only.pth", help='test used ckpt path')
+    parser.add_argument('--config', type=str, default="cfgs/tta_prune/tta_prune_modelnet.yaml", help='yaml config file')
     parser.add_argument('--group_norm', action='store_true', help='If Group Norm shall be used instead of Batch Norm')
     parser.add_argument('--test_source', action='store_true')
     parser.add_argument('--tta', action='store_true', default=False, help='test mode for test-time adaptation')
@@ -25,7 +25,7 @@ def get_args():
     parser.add_argument('--jt', action='store_true', default=False, help='train model with JT')
     parser.add_argument('--only_cls', action='store_true', default=False, help='train model only for cls task / without JT')
     parser.add_argument('--train_aug', action='store_true', default=False, help='weather to use augmentations for train/test')
-    parser.add_argument('--dataset_name', type=str, default=None, help='which dataset to use for tta', choices=['modelnet', 'scanobject', 'scanobject_nbg', 'partnet', 'shapenetcore', 'shapenet'])
+    parser.add_argument('--dataset_name', type=str, default="modelnet", help='which dataset to use for tta', choices=['modelnet', 'scanobject', 'scanobject_nbg', 'partnet', 'shapenetcore', 'shapenet'])
     parser.add_argument('--cyclic', action='store_true', default=False, help='get cls loss with 100% tokens and recon loss with 10% - used for joint pretraining!!!')
     parser.add_argument('--tta_rot', action='store_true', default=False, help='do tta for rotnet')
     parser.add_argument('--train_tttrot', action='store_true', default=False, help='train ttt rotnet')
@@ -94,6 +94,10 @@ def get_args():
         '--shot', type=int, default=-1)
     parser.add_argument(
         '--fold', type=int, default=-1)
+    parser.add_argument(
+        '--train_with_prune', action='store_true',
+        default=False)
+    
 
     args = parser.parse_args()
 

@@ -58,14 +58,14 @@ corruptions_h5 = [
 
 
 
-def fps(data, number):
+def fps(data, number, random_start_point=False):
     '''
         data B N 3
         number int
     '''
     # fps_idx = pointnet2_utils.furthest_point_sample(data, number) 
     # fps_data = pointnet2_utils.gather_operation(data.transpose(1, 2).contiguous(), fps_idx).transpose(1,2).contiguous()
-    fps_data, _ = sample_farthest_points(points=data, K=number) # pytorch3d
+    fps_data, _ = sample_farthest_points(points=data, K=number, random_start_point=random_start_point) # pytorch3d
     return fps_data
 
 

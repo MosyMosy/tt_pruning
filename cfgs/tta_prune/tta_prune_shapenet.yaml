@@ -18,7 +18,7 @@ dataset : {
             others: {subset: 'test'}}}
 
 model : {
-  NAME: Point_MAE,
+  NAME: PointTransformer,
   group_size: 32,
   num_group: 64,
   loss: cdl2,
