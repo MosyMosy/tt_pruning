@@ -1839,24 +1839,24 @@ class TransformerEncoder_prune(nn.Module):
             ]
         )
 
-    def forward(self, x, pos, out_intermediate=False, source_stats=None):
+    def forward_base(self, x, pos, out_intermediate=False, source_stats=None):
         
         intermediates = []
         for i, block in enumerate(self.blocks):
             if source_stats is not None:
-                if i == 0:
+                thresholds = [1.8,1.7,1.6,1.5,1.4,1.3,1.2,1.1,1.0,0.9,0.8,0.7]
+                if i in [0,1,2,3,4,5,6,7,8,9,10,11]:
                     surce_mean = source_stats[0][i][None, None, :]
                     surce_std = source_stats[1][i][None, None, :]
-                    x_distance = ((x + pos) - surce_mean).abs() / (surce_std + 1e-6)
-                    x_distance = x_distance.sum(dim=-1)
-                    x_distance = (
-                        x_distance - x_distance.min(dim=-1, keepdim=True)[0]
-                    ) / (
-                        x_distance.max(dim=-1, keepdim=True)[0]
-                        - x_distance.min(dim=-1, keepdim=True)[0]
-                        + 1e-6
-                    )
-                    x_mask = x_distance <= 0.8
+                    
+                    x_ = (x + pos)
+                    x_ = x_ - x_.mean(dim=(2), keepdim=True)
+                    x_ = x_ / (x_.std(dim=(2), keepdim=True) + 1e-6)
+                    
+                    x_distance = (x_ - surce_mean).abs() / (surce_std + 1e-6)
+                    x_distance = x_distance.mean(dim=-1)
+                    # z_score = (x_distance - x_distance.mean()) / x_distance.std()
+                    x_mask = x_distance <= 1
                     x_mask[:, 0] = 1  # keep the [CLS] token unmasked
                     # remove the tokens from x based on the mask
                     x = x[0][x_mask[0]].unsqueeze(0)
@@ -1867,7 +1867,108 @@ class TransformerEncoder_prune(nn.Module):
 
             if out_intermediate:
                 x_ = (x + pos)[:, 1:, :]  # remove the [CLS] token
-                x_ = x_ - x_.mean(dim=(1, 2), keepdim=True)
-                x_ = x_ / (x_.std(dim=(1, 2), keepdim=True) + 1e-6)
+                x_ = x_ - x_.mean(dim=(2), keepdim=True)
+                x_ = x_ / (x_.std(dim=(2), keepdim=True) + 1e-6)
+                intermediates.append(x_)
+        return x, intermediates
+
+    
+    def forward_(self, x, pos, out_intermediate=False, source_stats=None):        
+        intermediates = []
+        for i, block in enumerate(self.blocks):
+            if source_stats is not None:
+                keep_size = int(x.size(1) * 0.8)
+                if i in [0,1,2,3,4,5,6,7,8,9,10,11]:
+                    surce_mean = source_stats[0][i][None, None, :]
+                    surce_std = source_stats[1][i][None, None, :]
+                    
+                    
+                    x_ = x[:,1:, :] + pos[:,1:, :]
+                    x_ = x_ - x_.mean(dim=(2), keepdim=True)
+                    x_ = x_ / (x_.std(dim=(2), keepdim=True) + 1e-6)
+                    
+                    x_distance = (x_ - surce_mean).abs() / (surce_std + 1e-6)
+                    x_distance = x_distance.mean(dim=-1)
+                    sorted_idx = torch.argsort(x_distance, dim=-1)
+                    sorted_idx = sorted_idx[:, :keep_size].unsqueeze(-1).expand(-1, -1, x.shape[-1])
+                    
+                    cls_token = x[:, 0:1, :] + pos[:, 0:1, :]
+                    x = torch.cat([cls_token, x[:,1:, :].gather(1, sorted_idx)], dim=1)
+                    pos = torch.cat([pos[:, 0:1, :], pos[:,1:, :].gather(1, sorted_idx)], dim=1)
+                    # x = x * x_mask
+
+            x = block(x + pos)
+
+            if out_intermediate:
+                x_ = (x + pos)[:, 1:, :]  # remove the [CLS] token
+                x_ = x_ - x_.mean(dim=(2), keepdim=True)
+                x_ = x_ / (x_.std(dim=(2), keepdim=True) + 1e-6)
+                intermediates.append(x_)
+        return x, intermediates
+
+
+    def forward(self, x, pos, out_intermediate=False, source_stats=None):
+        
+        intermediates = []
+        for i, block in enumerate(self.blocks):
+            if source_stats is not None:
+                thresholds = [1.8,1.7,1.6,1.5,1.4,1.3,1.2,1.1,1.0,0.9,0.8,0.7]
+                if i in [0,1,2,3,4,5,6,7,8,9,10,11]:
+                    surce_mean = source_stats[0][i][None, None, :]
+                    surce_std = source_stats[1][i][None, None, :]
+                    
+                    x_ = (x + pos)
+                    x_ = x_ - x_.mean(dim=(2), keepdim=True)
+                    x_ = x_ / (x_.std(dim=(2), keepdim=True) + 1e-6)
+                    
+                    x_distance = (x_ - surce_mean).abs() / (surce_std + 1e-6)
+                    x_distance = x_distance.mean(dim=-1)
+                    # z_score = (x_distance - x_distance.mean()) / x_distance.std()
+                    x_distance_range = x_distance.max() - x_distance.min()
+                    x_mask = x_distance <= max(1, x_distance.mean())
+                    # x_mask = x_distance <= 1.2 
+                    x_mask[:, 0] = 1  # keep the [CLS] token unmasked
+                    # remove the tokens from x based on the mask
+                    x = x[0][x_mask[0]].unsqueeze(0)
+                    pos = pos[0][x_mask[0]].unsqueeze(0)
+                    # x = x * x_mask
+
+            x = block(x + pos)
+
+            if out_intermediate:
+                x_ = (x + pos)[:, 1:, :]  # remove the [CLS] token
+                x_ = x_ - x_.mean(dim=(2), keepdim=True)
+                x_ = x_ / (x_.std(dim=(2), keepdim=True) + 1e-6)
+                intermediates.append(x_)
+        return x, intermediates
+
+
+    def forward__(self, x, pos, out_intermediate=False, source_stats=None):        
+        intermediates = []
+        for i, block in enumerate(self.blocks):
+            if source_stats is not None:
+                thresholds = [1.8,1.7,1.6,1.5,1.4,1.3,1.2,1.1,1.0,0.9,0.8,0.7]
+                if i in [0,1,2,3,4,5,6,7,8,9,10,11]:
+                    surce_mean = source_stats[0][i][None, None, :]
+                    surce_std = source_stats[1][i][None, None, :]
+                    
+                    x_ = (x + pos)
+                    # compute the cosine similarity between x_ (B, N, C) and the source mean (1, 1, C)
+                    sim = F.cosine_similarity(x_, surce_mean, dim=-1)                  
+                    
+                    # z_score = (x_distance - x_distance.mean()) / x_distance.std()
+                    x_mask = sim > 0.2
+                    x_mask[:, 0] = 1  # keep the [CLS] token unmasked
+                    # remove the tokens from x based on the mask
+                    x = x[0][x_mask[0]].unsqueeze(0)
+                    pos = pos[0][x_mask[0]].unsqueeze(0)
+                    # x = x * x_mask
+
+            x = block(x + pos)
+
+            if out_intermediate:
+                x_ = (x + pos)[:, 1:, :]  # remove the [CLS] token
+                x_ = x_ - x_.mean(dim=(2), keepdim=True)
+                x_ = x_ / (x_.std(dim=(2), keepdim=True) + 1e-6)
                 intermediates.append(x_)
         return x, intermediates
