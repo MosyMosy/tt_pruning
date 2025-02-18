@@ -328,3 +328,24 @@ def random_dropping(pc, e):
 def random_scale(partial, scale_range=[0.8, 1.2]):
     scale = torch.rand(1).cuda() * (scale_range[1] - scale_range[0]) + scale_range[0]
     return partial * scale
+
+
+
+def mahalanobis_distance(tokens, mean, std):
+    """
+    Compute Mahalanobis distance between tokens and pre-training statistics.
+    Args:
+        tokens (torch.Tensor): Test-time token embeddings, shape (B, N, C)
+        mean (torch.Tensor): Pre-training mean, shape (1, 1, C)
+        std (torch.Tensor): Pre-training std deviation, shape (1, 1, C)
+    Returns:
+        torch.Tensor: Mahalanobis distance for each token, shape (B, N)
+    """
+    # Compute variance (assuming diagonal covariance)
+    variance = std ** 2  # Shape: (1, 1, C)
+    # Compute squared Mahalanobis distance per token
+    diff = tokens - mean  # Shape: (B, N, C)
+    mahalanobis_sq = (diff ** 2) / variance  # Element-wise division (B, N, C)
+    # Sum over feature dimensions (C) to get final Mahalanobis distance
+    mahalanobis_dist = torch.sqrt(mahalanobis_sq.sum(dim=-1))  # Shape: (B, N)
+    return mahalanobis_dist
