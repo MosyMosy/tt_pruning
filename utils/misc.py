@@ -349,3 +349,34 @@ def mahalanobis_distance(tokens, mean, std):
     # Sum over feature dimensions (C) to get final Mahalanobis distance
     mahalanobis_dist = torch.sqrt(mahalanobis_sq.sum(dim=-1))  # Shape: (B, N)
     return mahalanobis_dist
+
+
+def dynamic_threshold(mahalanobis_distances, T_base, alpha=1.0, beta=0.5):
+    """
+    Compute a dynamic threshold for outlier detection, ensuring it never falls below P_min.
+
+    Args:
+        mahalanobis_distances (torch.Tensor): Mahalanobis distances, shape (B, N).
+        T_base (float): Base threshold from clean data.
+        alpha (float): Controls the impact of mean deviation.
+        beta (float): Controls the impact of the max distance range.
+
+    Returns:
+        torch.Tensor: Binary mask (1 for outlier, 0 for inliers).
+        float: Adaptive threshold.
+    """
+    mu = torch.mean(mahalanobis_distances)
+    sigma = torch.std(mahalanobis_distances)
+    max_distance = torch.max(mahalanobis_distances)
+    min_distance = torch.min(mahalanobis_distances)
+
+    # Small epsilon to avoid division by zero
+    epsilon = 1e-6
+
+    # Compute adaptive threshold
+    threshold = T_base - alpha * (mu - T_base) + beta * (max_distance - mu) / (sigma + epsilon)
+
+    # Ensure threshold is never smaller than P_min
+    threshold = torch.clamp(threshold, min_distance, max_distance)
+
+    return threshold.float().item()

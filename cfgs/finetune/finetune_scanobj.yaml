@@ -13,12 +13,13 @@ scheduler: {
 }}
 
 dataset : {
-  train : { _base_: cfgs/dataset_configs/ScanObjectNN_objectonly.yaml,
+  train : { _base_: cfgs/dataset_configs/ScanObjectNN.yaml,
             others: {subset: 'train'}},
-  val : { _base_: cfgs/dataset_configs/ScanObjectNN_objectonly.yaml,
+  val : { _base_: cfgs/dataset_configs/ScanObjectNN.yaml,
             others: {subset: 'test'}},
-  test : { _base_: cfgs/dataset_configs/ScanObjectNN_objectonly.yaml,
+  test : { _base_: cfgs/dataset_configs/ScanObjectNN.yaml,
             others: {subset: 'test'}}}
+
 model : {
   NAME: PointTransformer,
   trans_dim: 384,
@@ -29,11 +30,12 @@ model : {
   group_size: 32,
   num_group: 128,
   encoder_dims: 384,
+  num_hid_cls_layers: 2,
 }
 
 
-npoints: 1024
-total_bs : 128
+npoints: 2048
+total_bs : 32
 step_per_update : 1
 max_epoch : 300
 grad_norm_clip : 10

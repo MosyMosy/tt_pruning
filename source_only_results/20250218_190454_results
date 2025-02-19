@@ -1,0 +1,90 @@
+alpha 0.0
+baseline tent
+batch_size 1
+batch_size_tta 48
+ckpts experiments/finetune_modelnet/finetune/pretrain_clean_modelnet/ckpt-best.pth
+config cfgs/tta_prune/tta_prune_modelnet.yaml
+corruption uniform
+cyclic False
+dataset_name modelnet
+debug False
+deterministic False
+disable_bn_adaptation False
+distributed False
+exp_name default
+experiment_path ./experiments/tta_prune_modelnet/tta_prune/default
+finetune_model False
+fold -1
+grad_steps 1
+group_norm False
+jt False
+launcher none
+local_rank 0
+log_name tta_prune_modelnet
+loss cd1
+mask_ratio 0.9
+mode None
+num_workers 8
+online True
+only_cls False
+only_unmasked False
+partnet_cls False
+resume False
+scratch_model False
+seed 0
+severity 5
+shot -1
+shuffle True
+split test
+start_ckpts None
+stride_step 1
+sync_bn False
+test False
+test_source False
+test_source_rotnet False
+tfboard_path ./experiments/tta_prune_modelnet/tta_prune/TFBoard/default
+train_aug False
+train_tttrot False
+train_with_prune False
+tta False
+tta_dua False
+tta_rot False
+tta_seg False
+use_gpu True
+val_freq 1
+visualize_data False
+vote False
+way -1
+
+
+--- COPYING CONFIGURATION ---
+
+
+
+{'optimizer': {'type': 'AdamW', 'kwargs': {'lr': 5e-05, 'weight_decay': 0.05}}, 'scheduler': {'type': 'function'}, 'dataset': {'train': {'_base_': {'NAME': 'ModelNet', 'DATA_PATH': '/export/datasets/public/Point_Cloud_Processing/TTA/clean/modelnet40_normal_resampled', 'N_POINTS': 8192, 'NUM_CATEGORY': 40, 'USE_NORMALS': False}, 'others': {'subset': 'train', 'bs': 32}}, 'val': {'_base_': {'NAME': 'ModelNet', 'DATA_PATH': '/export/datasets/public/Point_Cloud_Processing/TTA/clean/modelnet40_normal_resampled', 'N_POINTS': 8192, 'NUM_CATEGORY': 40, 'USE_NORMALS': False}, 'others': {'subset': 'test', 'bs': 64}}, 'test': {'_base_': {'NAME': 'ModelNet', 'DATA_PATH': '/export/datasets/public/Point_Cloud_Processing/TTA/clean/modelnet40_normal_resampled', 'N_POINTS': 8192, 'NUM_CATEGORY': 40, 'USE_NORMALS': False}, 'others': {'subset': 'test', 'bs': 32}}}, 'model': {'NAME': 'PointTransformer_prune', 'trans_dim': 384, 'depth': 12, 'drop_path_rate': 0.1, 'cls_dim': 40, 'num_heads': 6, 'group_size': 32, 'num_group': 64, 'encoder_dims': 384, 'num_hid_cls_layers': 2}, 'npoints': 1024, 'total_bs': 32, 'step_per_update': 1, 'max_epoch': 1, 'grad_norm_clip': 10, 'tta_dataset_path': '/export/datasets/public/Point_Cloud_Processing/TTA/Corrupt', 'normal': False}
+
+#############################
+#############################
+
+
+All Corruptions: ['uniform', 'gaussian', 'background', 'impulse', 'upsampling', 'distortion_rbf', 'distortion_rbf_inv', 'density', 'density_inc', 'shear', 'rotation', 'cutout', 'distortion', 'occlusion', 'lidar']
+
+Source Only Results for Dataset: modelnet
+
+Check Point: experiments/finetune_modelnet/finetune/pretrain_clean_modelnet/ckpt-best.pth
+
+79.943
+76.175
+16.856
+48.784
+82.942
+75.648
+77.229
+78.606
+84.724
+77.229
+47.853
+76.499
+76.175
+37.966
+29.984

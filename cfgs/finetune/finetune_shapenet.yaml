@@ -13,27 +13,29 @@ scheduler: {
 }}
 
 dataset : {
-  train : { _base_: cfgs/dataset_configs/ModelNet40.yaml,
+  train : { _base_: cfgs/dataset_configs/ShapeNetCore.yaml,
             others: {subset: 'train'}},
-  val : { _base_: cfgs/dataset_configs/ModelNet40.yaml,
+  val : { _base_: cfgs/dataset_configs/ShapeNetCore.yaml,
             others: {subset: 'test'}},
-  test : { _base_: cfgs/dataset_configs/ModelNet40.yaml,
+  test : { _base_: cfgs/dataset_configs/ShapeNetCore.yaml,
             others: {subset: 'test'}}}
+
 model : {
   NAME: PointTransformer,
   trans_dim: 384,
   depth: 12,
   drop_path_rate: 0.1,
-  cls_dim: 40,
+  cls_dim: 55,
   num_heads: 6,
   group_size: 32,
-  num_group: 512,
+  num_group: 64,
   encoder_dims: 384,
+  num_hid_cls_layers: 2,
 }
 
 
-npoints: 8192
-total_bs : 32
+npoints: 1024
+total_bs : 128
 step_per_update : 1
 max_epoch : 300
 grad_norm_clip : 10

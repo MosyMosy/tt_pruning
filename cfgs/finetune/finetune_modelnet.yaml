@@ -19,6 +19,7 @@ dataset : {
             others: {subset: 'test'}},
   test : { _base_: cfgs/dataset_configs/ModelNet40.yaml,
             others: {subset: 'test'}}}
+
 model : {
   NAME: PointTransformer,
   trans_dim: 384,
@@ -29,6 +30,7 @@ model : {
   group_size: 32,
   num_group: 64,
   encoder_dims: 384,
+  num_hid_cls_layers: 2,
 }
 
 

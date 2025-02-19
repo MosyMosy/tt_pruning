@@ -1923,7 +1923,7 @@ class TransformerEncoder_prune(nn.Module):
                     
                     x_distance = misc.mahalanobis_distance(x_, surce_mean, surce_std)
                     # z_score = (x_distance - x_distance.mean()) / x_distance.std()
-                    x_mask = x_distance <= max(25, x_distance.mean())
+                    x_mask = x_distance <= misc.dynamic_threshold(x_distance, 25, alpha=1.0, beta=0.5)
                     # x_mask = x_distance <= 1.2 
                     # remove the tokens from x based on the mask
                     x = torch.cat([x[:, 0:1], x[:, 1:][0][x_mask[0]].unsqueeze(0)], dim=1) 

@@ -28,7 +28,6 @@ model : {
   num_group: 64,
   encoder_dims: 384,
   num_hid_cls_layers: 2,
-
 }
 
 

@@ -14,10 +14,10 @@ def get_args():
     parser.add_argument('--disable_bn_adaptation', action='store_true', help='to disable bn_for adaptation')
     parser.add_argument('--online', action='store_true', default=True, help='online-adapt')
     parser.add_argument('--visualize_data', action='store_true', help='image creation')
-    parser.add_argument('--ckpts', type=str, default="checkpoints/modelnet_src_only.pth", help='test used ckpt path')
+    parser.add_argument('--ckpts', type=str, default="checkpoints/modelnet_src_only.pth", help='test used ckpt path') #default="checkpoints/modelnet_src_only.pth", help='test used ckpt path'
     parser.add_argument('--config', type=str, default="cfgs/tta_prune/tta_prune_modelnet.yaml", help='yaml config file')
     parser.add_argument('--group_norm', action='store_true', help='If Group Norm shall be used instead of Batch Norm')
-    parser.add_argument('--test_source', action='store_true')
+    parser.add_argument('--test_source', action='store_true', default=False, help='test source model')
     parser.add_argument('--tta', action='store_true', default=False, help='test mode for test-time adaptation')
     parser.add_argument('--tta_seg', action='store_true', default=False, help='test mode for test-time adaptation for part segmentation')
     parser.add_argument('--debug', action='store_true', default=False, help='only load small number of samples')

@@ -18,27 +18,17 @@ dataset : {
             others: {subset: 'test'}}}
 
 model : {
-  NAME: PointTransformer,
+  NAME: PointTransformer_prune,
+  trans_dim: 384,
+  depth: 12,
+  drop_path_rate: 0.1,
+  cls_dim: 55,
+  num_heads: 6,
   group_size: 32,
   num_group: 64,
-  loss: cdl2,
-  cls_dim: 55,
+  encoder_dims: 384,
   num_hid_cls_layers: 2,
-  group_norm: False,
-  regularize: True,
-
-  transformer_config: {
-    mask_ratio: 0.9,
-    mask_type: 'rand',
-    trans_dim: 384,
-    encoder_dims: 384,
-    depth: 12,
-    drop_path_rate: 0.1,
-    num_heads: 6,
-    decoder_depth: 4,
-    decoder_num_heads: 6,
-  },
-  }
+}
 
 npoints: 1024
 total_bs : 128

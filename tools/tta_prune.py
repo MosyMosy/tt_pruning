@@ -12,6 +12,7 @@ level = [5]
 
 from tqdm import tqdm
 
+import os
 
 def load_tta_dataset(args, config):
     # we have 3 choices - every tta_loader returns only point and labels
@@ -87,8 +88,6 @@ def load_base_model(args, config, logger, load_part_seg=False, pretrained=True):
 
 
 def eval_source(args, config):
-    config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
-    config.model.group_norm = args.group_norm
     npoints = config.npoints
     logger = get_logger(args.log_name)
     dataset_name = args.dataset_name
@@ -144,7 +143,7 @@ def eval_source(args, config):
 
                     points = points.cuda()
                     labels = label.cuda()
-                    logits = base_model.module.classification_only(points, only_unmasked=False)
+                    logits = base_model(points)
                     target = labels.view(-1)
                     pred = logits.argmax(-1).view(-1)
 
