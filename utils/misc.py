@@ -350,33 +350,72 @@ def mahalanobis_distance(tokens, mean, std):
     mahalanobis_dist = torch.sqrt(mahalanobis_sq.sum(dim=-1))  # Shape: (B, N)
     return mahalanobis_dist
 
-
-def dynamic_threshold(mahalanobis_distances, T_base, alpha=1.0, beta=0.5):
+def zscore_distance(tokens, mean, std):
     """
-    Compute a dynamic threshold for outlier detection, ensuring it never falls below P_min.
+    Compute Z-score distance between tokens and pre-training statistics.
+    
+    Args:
+        tokens (torch.Tensor): Test-time token embeddings, shape (B, N, C)
+        mean (torch.Tensor): Pre-training mean, shape (1, 1, C)
+        std (torch.Tensor): Pre-training std deviation, shape (1, 1, C)
+    
+    Returns:
+        torch.Tensor: Z-score distance for each token, shape (B, N)
+    """
+    # Compute Z-score
+    z_score = (tokens - mean) / std  # Shape: (B, N, C)
+    
+    # Compute Euclidean (L2) norm across the feature dimension (C)
+    zscore_dist = z_score.sum(dim=-1)  # Shape: (B, N)
+    
+    return zscore_dist
+
+def euclidean_distance(tokens, mean):
+    """
+    Compute Euclidean distance between tokens and pre-training mean.
+    
+    Args:
+        tokens (torch.Tensor): Test-time token embeddings, shape (B, N, C)
+        mean (torch.Tensor): Pre-training mean, shape (1, 1, C)
+    
+    Returns:
+        torch.Tensor: Euclidean distance for each token, shape (B, N)
+    """
+    # Compute squared difference
+    diff = tokens - mean  # Shape: (B, N, C)
+    
+    # Compute Euclidean (L2) norm across the feature dimension (C)
+    euclidean_dist = torch.sqrt((diff ** 2).sum(dim=-1))  # Shape: (B, N)
+    
+    return euclidean_dist
+
+
+def dynamic_threshold(mahalanobis_distances, T_base, k=5.0, max_multiplier=2):
+    """
+    Compute a dynamic threshold that moves from mean toward min or max but never reaches them.
 
     Args:
         mahalanobis_distances (torch.Tensor): Mahalanobis distances, shape (B, N).
         T_base (float): Base threshold from clean data.
-        alpha (float): Controls the impact of mean deviation.
-        beta (float): Controls the impact of the max distance range.
+        k (float): Controls the speed of threshold movement.
 
     Returns:
-        torch.Tensor: Binary mask (1 for outlier, 0 for inliers).
+        torch.Tensor: Binary mask (1 for outliers, 0 for inliers).
         float: Adaptive threshold.
     """
+    if mahalanobis_distances.numel() == 0:
+        return None  # Handle empty input
+
+    P_min = torch.min(mahalanobis_distances)
+    P_max = torch.max(mahalanobis_distances) * max_multiplier
+    P_min += (P_max - P_min) * 0.1  # Add a small margin to P_min
     mu = torch.mean(mahalanobis_distances)
-    sigma = torch.std(mahalanobis_distances)
-    max_distance = torch.max(mahalanobis_distances)
-    min_distance = torch.min(mahalanobis_distances)
 
-    # Small epsilon to avoid division by zero
-    epsilon = 1e-6
+    # Sigmoid function to control smooth movement toward P_min or P_max
+    weight = 1 / (1 + torch.exp(k * (mu - T_base)))
 
-    # Compute adaptive threshold
-    threshold = T_base - alpha * (mu - T_base) + beta * (max_distance - mu) / (sigma + epsilon)
+    # Compute threshold moving toward min or max, but never reaching them
+    threshold = P_min + (P_max - P_min) * weight
 
-    # Ensure threshold is never smaller than P_min
-    threshold = torch.clamp(threshold, min_distance, max_distance)
+    return threshold
 
-    return threshold.float().item()

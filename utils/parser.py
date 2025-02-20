@@ -25,7 +25,6 @@ def get_args():
     parser.add_argument('--jt', action='store_true', default=False, help='train model with JT')
     parser.add_argument('--only_cls', action='store_true', default=False, help='train model only for cls task / without JT')
     parser.add_argument('--train_aug', action='store_true', default=False, help='weather to use augmentations for train/test')
-    parser.add_argument('--dataset_name', type=str, default="modelnet", help='which dataset to use for tta', choices=['modelnet', 'scanobject', 'scanobject_nbg', 'partnet', 'shapenetcore', 'shapenet'])
     parser.add_argument('--cyclic', action='store_true', default=False, help='get cls loss with 100% tokens and recon loss with 10% - used for joint pretraining!!!')
     parser.add_argument('--tta_rot', action='store_true', default=False, help='do tta for rotnet')
     parser.add_argument('--train_tttrot', action='store_true', default=False, help='train ttt rotnet')
@@ -97,7 +96,8 @@ def get_args():
     parser.add_argument(
         '--train_with_prune', action='store_true',
         default=False)
-    
+    parser.add_argument(
+        '--method', type=str, choices=["source_only", "source_prune", "source_prune_tent"], default="source_prune")
 
     args = parser.parse_args()
 

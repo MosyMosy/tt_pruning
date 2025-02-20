@@ -10,6 +10,7 @@ scheduler: {
 }
 
 dataset : {
+  name: modelnet,
   train : { _base_: cfgs/dataset_configs/ModelNet40.yaml,
             others: {subset: 'train'}},
   val : { _base_: cfgs/dataset_configs/ModelNet40.yaml,
@@ -36,5 +37,5 @@ total_bs : 32
 step_per_update : 1
 max_epoch : 1
 grad_norm_clip : 10
-tta_dataset_path : "/export/datasets/public/Point_Cloud_Processing/TTA/Corrupt" #'./data/tta_datasets'
+tta_dataset_path : "/export/datasets/public/Point_Cloud_Processing/TTA/Corrupt/modelnet_c/" #'./data/tta_datasets'
 normal : False

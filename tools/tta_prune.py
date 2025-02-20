@@ -18,9 +18,7 @@ def load_tta_dataset(args, config):
     # we have 3 choices - every tta_loader returns only point and labels
     root = config.tta_dataset_path  # being lazy - 1
 
-    if args.dataset_name == 'modelnet':
-        root = os.path.join(root, f'{args.dataset_name}_c')
-
+    if config.dataset.name == 'modelnet':
         if args.corruption == 'clean':
             inference_dataset = tta_datasets.ModelNet_h5(args, root)
             tta_loader = DataLoader(dataset=inference_dataset, batch_size=args.batch_size, shuffle=args.shuffle, drop_last=True)
@@ -28,28 +26,11 @@ def load_tta_dataset(args, config):
             inference_dataset = tta_datasets.ModelNet40C(args, root)
             tta_loader = DataLoader(dataset=inference_dataset, batch_size=args.batch_size, shuffle=args.shuffle, drop_last=True)
 
-    elif args.dataset_name == 'partnet':
-        if args.corruption != 'clean':
-            root = os.path.join(root, f'{args.dataset_name}_c',
-                                f'{args.corruption}_{args.severity}')
-        else:
-            root = os.path.join(root, f'{args.dataset_name}_c',
-                                f'{args.corruption}')
-
-        inference_dataset = tta_datasets.PartNormalDataset(root=root, npoints=config.npoints, split='test',
-                                                           normal_channel=config.normal, debug=args.debug)
-        tta_loader = DataLoader(inference_dataset, batch_size=args.batch_size, shuffle=args.shuffle, drop_last=True)
-    elif args.dataset_name == 'scanobject':
-
-        root = os.path.join(root, f'{args.dataset_name}_c')
-
+    elif config.dataset.name == 'scanobject':
         inference_dataset = tta_datasets.ScanObjectNN(args=args, root=root)
         tta_loader = DataLoader(inference_dataset, batch_size=args.batch_size, shuffle=args.shuffle, drop_last=True)
 
-    elif args.dataset_name == 'shapenetcore':
-
-        root = os.path.join(root, f'{args.dataset_name}_c')
-
+    elif config.dataset.name == 'shapenetcore':
         inference_dataset = tta_datasets.ShapeNetCore(args=args, root=root)
         tta_loader = DataLoader(inference_dataset, batch_size=args.batch_size, shuffle=args.shuffle, drop_last=True)
 
@@ -90,20 +71,7 @@ def load_base_model(args, config, logger, load_part_seg=False, pretrained=True):
 def eval_source(args, config):
     npoints = config.npoints
     logger = get_logger(args.log_name)
-    dataset_name = args.dataset_name
-
-    if dataset_name == 'modelnet':
-        config.model.cls_dim = 40
-    elif dataset_name == 'scanobject':  # for with background
-        config.model.cls_dim = 15
-    elif dataset_name == 'scanobject_nbg':  # for no background
-        config.model.cls_dim = 15
-    elif dataset_name == 'partnet':
-        config.model.cls_dim = 16
-    elif dataset_name == 'shapenetcore':
-        config.model.cls_dim = 55
-    else:
-        raise NotImplementedError
+    dataset_name = config.dataset.name
 
     for args.severity in level:
         for corr_id, args.corruption in enumerate(corruptions):
@@ -125,21 +93,9 @@ def eval_source(args, config):
 
             with torch.no_grad():
                 for idx_inference, (data, labels) in enumerate(inference_loader):
-                    if dataset_name == 'modelnet':
-                        points = data.cuda()
-                        points = misc.fps(points, npoints)
-                        label = labels.cuda()
-                    elif dataset_name in ['scanobject', 'scanobject_wbg', 'scanobject_nbg']:
-                        points = data.cuda()
-                        points = misc.fps(points, npoints)
-                        label = labels.cuda()
-                    elif dataset_name == 'partnet':
-                        points = data.cuda()
-                        label = labels.cuda()
-                    elif dataset_name == 'shapenetcore':
-                        points = data.cuda()
-                        points = misc.fps(points, npoints)
-                        label = labels.cuda()
+                    points = data.cuda()
+                    points = misc.fps(points, npoints)
+                    label = labels.cuda()
 
                     points = points.cuda()
                     labels = label.cuda()
@@ -168,7 +124,7 @@ def eval_source(args, config):
 
 
 def source_prune(args, config, train_writer=None):
-    dataset_name = args.dataset_name
+    dataset_name = config.dataset.name
     npoints = config.npoints
     logger = get_logger(args.log_name)
     
@@ -176,7 +132,7 @@ def source_prune(args, config, train_writer=None):
     source_model.eval()
     
     
-    clean_intermediates_path = f'intermediate_features/{args.dataset_name}_clean_intermediates.pth'
+    clean_intermediates_path = f'intermediate_features/{dataset_name}_clean_intermediates.pth'
     if os.path.exists(clean_intermediates_path):
         clean_intermediates = torch.load(clean_intermediates_path)
         clean_intermediates_mean, clean_intermediates_std = clean_intermediates['mean'], clean_intermediates['std']
@@ -206,6 +162,9 @@ def source_prune(args, config, train_writer=None):
                 continue
                 # raise NotImplementedError('Not possible to use tta with clean data, please modify the list above')
 
+            # if corr_id not in [0]:
+            #     continue
+            
             if corr_id == 0:  # for saving results for easy copying to google sheet
 
                 f_write, logtime = get_writer_to_all_result(args, config, custom_path='results_final_tta/')

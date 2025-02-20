@@ -1,18 +1,15 @@
-from tools import pretrain_run_net as pretrain
-from tools import finetune_run_net as finetune
-from tools import test_run_net as test_net
 from utils import parser, dist_utils, misc
 from utils.logger import *
 from utils.config import *
+from tools.tta_prune import source_prune, eval_source
 import time
 import os
 import torch
 from tensorboardX import SummaryWriter
 
-def main():
-    # args
-    args = parser.get_args()
-    # CUDA
+
+def main(args):
+
     args.use_gpu = torch.cuda.is_available()
     if args.use_gpu:
         torch.backends.cudnn.benchmark = True
@@ -38,7 +35,7 @@ def main():
             train_writer = None
             val_writer = None
     # config
-    config = get_config(args, logger = logger)
+    config = get_config(args, logger=logger)
     # batch size
     if args.distributed:
         assert config.total_bs % world_size == 0
@@ -47,26 +44,26 @@ def main():
             config.dataset.extra_train.others.bs = config.total_bs // world_size * 2
         config.dataset.val.others.bs = config.total_bs // world_size * 2
         if config.dataset.get('test'):
-            config.dataset.test.others.bs = config.total_bs // world_size 
+            config.dataset.test.others.bs = config.total_bs // world_size
     else:
         config.dataset.train.others.bs = config.total_bs
         if config.dataset.get('extra_train'):
             config.dataset.extra_train.others.bs = config.total_bs * 2
         config.dataset.val.others.bs = config.total_bs * 2
         if config.dataset.get('test'):
-            config.dataset.test.others.bs = config.total_bs 
-    # log 
-    log_args_to_file(args, 'args', logger = logger)
-    log_config_to_file(config, 'config', logger = logger)
-    # exit()
+            config.dataset.test.others.bs = config.total_bs
+            # log
+    log_args_to_file(args, 'args', logger=logger)
+    log_config_to_file(config, 'config', logger=logger)
     logger.info(f'Distributed training: {args.distributed}')
     # set random seeds
     if args.seed is not None:
         logger.info(f'Set random seed to {args.seed}, '
                     f'deterministic: {args.deterministic}')
-        misc.set_random_seed(args.seed + args.local_rank, deterministic=args.deterministic) # seed + rank, for augmentation
+        misc.set_random_seed(args.seed + args.local_rank,
+                             deterministic=args.deterministic)  # seed + rank, for augmentation
     if args.distributed:
-        assert args.local_rank == torch.distributed.get_rank() 
+        assert args.local_rank == torch.distributed.get_rank()
 
     if args.shot != -1:
         config.dataset.train.others.shot = args.shot
@@ -75,16 +72,25 @@ def main():
         config.dataset.val.others.shot = args.shot
         config.dataset.val.others.way = args.way
         config.dataset.val.others.fold = args.fold
-        
-    # run
-    if args.test:
-        test_net(args, config)
+    dataset_name = config.dataset.name
+    assert args.ckpts is not None
+    assert dataset_name is not None
+
+    args.disable_bn_adaptation = True
+    args.batch_size_tta = 48
+    args.batch_size = 1
+    # config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
+    config.model.group_norm = args.group_norm
+
+    args.split = 'test'
+    if args.method == "source_only":
+        eval_source(args, config)
+    elif args.method == 'source_prune':
+        source_prune(args, config)
     else:
-        if args.finetune_model or args.scratch_model:
-            finetune(args, config, train_writer, val_writer)
-        else:
-            pretrain(args, config, train_writer, val_writer)
+        raise NotImplementedError
 
 
 if __name__ == '__main__':
-    main()
+    args = parser.get_args()
+    main(args)
