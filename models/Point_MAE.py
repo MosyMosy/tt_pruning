@@ -113,7 +113,9 @@ class Group(nn.Module):
         )  # idx_base  (8, 1, 1)
         idx = idx + idx_base  # for  batch 0 offset 0,   batch 1 ~7,  offset  1*2048
         idx = idx.view(-1)
-        neighborhood = xyz.view(batch_size * num_points, -1)[
+        neighborhood = xyz.view(
+            batch_size * num_points, -1
+        )[
             idx, :
         ]  # (8, 2048, 3) -> (8*2048, 3)   # todo sampling the neighborhoold points for each center in each batch
         neighborhood = neighborhood.view(
@@ -577,7 +579,6 @@ class Point_MAE(nn.Module):
         # self.loss_func = emd().cuda()
 
     def get_loss_acc(self, ret, gt):
-
         loss = self.loss_ce(ret, gt.long())
         pred = ret.argmax(-1)
         acc = (pred == gt).sum() / float(gt.size(0))
@@ -1435,7 +1436,6 @@ class Point_MAE_SemSegmentation(nn.Module):
         return class_ret
 
     def forward(self, pts, cls_loss_masked=True, tta=False, **kwargs):
-
         B_, N_, _ = (
             pts.shape
         )  # pts (8, 2048, 3),  cls_label (8,1,16) one-hot ,   partnet_cls
@@ -1839,28 +1839,45 @@ class TransformerEncoder_prune(nn.Module):
             ]
         )
 
-    def forward_(self, x, pos, out_intermediate=False, source_stats=None):        
+    def forward(self, x, pos, out_intermediate=False, source_stats=None):
         intermediates = []
         for i, block in enumerate(self.blocks):
             if source_stats is not None:
-                thresholds = [1.8,1.7,1.6,1.5,1.4,1.3,1.2,1.1,1.0,0.9,0.8,0.7]
-                if i in [0,1,2,3,4,5,6,7,8,9,10,11]:
+                thresholds = [
+                    1.8,
+                    1.7,
+                    1.6,
+                    1.5,
+                    1.4,
+                    1.3,
+                    1.2,
+                    1.1,
+                    1.0,
+                    0.9,
+                    0.8,
+                    0.7,
+                ]
+                if i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]:
                     surce_mean = source_stats[0][i][None, None, :]
                     surce_std = source_stats[1][i][None, None, :]
-                    
-                    x_ = (x[:, 1:] + pos[:, 1:]) # No CLS Token
+
+                    x_ = x[:, 1:] + pos[:, 1:]  # No CLS Token
                     x_ = x_ - x_.mean(dim=(2), keepdim=True)
                     x_ = x_ / (x_.std(dim=(2), keepdim=True) + 1e-6)
-                    
+
                     x_distance = misc.mahalanobis_distance(x_, surce_mean, surce_std)
                     # z_score = (x_distance - x_distance.mean()) / x_distance.std()
-                    x_mask = x_distance <=  max(25, x_distance.mean()) #misc.dynamic_threshold(x_distance, 25, k=1, max_multiplier=1)
-                    # x_mask = x_distance <= 1.2 
+                    x_mask = x_distance <= max(
+                        25, x_distance.mean()
+                    )  # misc.dynamic_threshold(x_distance, 25, k=1, max_multiplier=1)
+                    # x_mask = x_distance <= 1.2
                     # remove the tokens from x based on the mask
                     masked_x = x[:, 1:][0][x_mask[0]].unsqueeze(0)
-                    
-                    x = torch.cat([x[:, 0:1], masked_x], dim=1) 
-                    pos = torch.cat([pos[:, 0:1], pos[:, 1:][0][x_mask[0]].unsqueeze(0)], dim=1) 
+
+                    x = torch.cat([x[:, 0:1], masked_x], dim=1)
+                    pos = torch.cat(
+                        [pos[:, 0:1], pos[:, 1:][0][x_mask[0]].unsqueeze(0)], dim=1
+                    )
                     # x = x * x_mask
 
             x = block(x + pos)
@@ -1871,28 +1888,28 @@ class TransformerEncoder_prune(nn.Module):
                 x_ = x_ / (x_.std(dim=(2), keepdim=True) + 1e-6)
                 intermediates.append(x_)
         return x, intermediates
-    
-    
-    
-    def forward(self, x, pos, out_intermediate=False, source_stats=None):        
+
+    def forward_(self, x, pos, out_intermediate=False, source_stats=None):
         intermediates = []
         for i, block in enumerate(self.blocks):
             if source_stats is not None:
-                if i in [0,1,2,3,4,5,6,7,8,9,10,11]:
-                    
-                    cls_token = x[:, 0:1] + pos[:, 0:1]
-                    
-                    x_ = (x[:, 1:] + pos[:, 1:]) # No CLS Token
-                    
+                if i in [0]:
+                    cls_token = x[:, 0:1]
+
+                    x_ = x[:, 1:]  # No CLS Token
+
                     x_distance = misc.euclidean_distance(x_, cls_token)
                     # x_distance = (x_distance - x_distance.min()) / (x_distance.max() - x_distance.min())
-                    x_mask = x_distance  <=  max(120, x_distance.mean())
-                    # x_mask = x_distance <= 1.2 
+                    x_mask = x_distance <= max(27.0, x_distance.mean())
+                    # x_mask = x_distance <= 1.2
                     # remove the tokens from x based on the mask
                     masked_x = x[:, 1:][0][x_mask[0]].unsqueeze(0)
-                    
-                    x = torch.cat([x[:, 0:1], masked_x], dim=1) 
-                    pos = torch.cat([pos[:, 0:1], pos[:, 1:][0][x_mask[0]].unsqueeze(0)], dim=1) 
+
+                    x = torch.cat([x[:, 0:1], masked_x], dim=1)
+                    pos = torch.cat(
+                        [pos[:, 0:1], pos[:, 1:][0][x_mask[0]].unsqueeze(0)], dim=1
+                    )
+
                     # x = x * x_mask
 
             x = block(x + pos)
@@ -1903,5 +1920,3 @@ class TransformerEncoder_prune(nn.Module):
                 x_ = x_ / (x_.std(dim=(2), keepdim=True) + 1e-6)
                 intermediates.append(x_)
         return x, intermediates
-    
-

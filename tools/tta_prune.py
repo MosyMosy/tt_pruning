@@ -162,7 +162,7 @@ def source_prune(args, config, train_writer=None):
                 continue
                 # raise NotImplementedError('Not possible to use tta with clean data, please modify the list above')
 
-            # if corr_id not in [0]:
+            # if corr_id not in [2]:
             #     continue
             
             if corr_id == 0:  # for saving results for easy copying to google sheet
