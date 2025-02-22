@@ -1,3 +1,4 @@
+import os
 import logging
 import torch.distributed as dist
 
@@ -128,14 +129,13 @@ def print_log(msg, logger=None, level=logging.INFO):
 
 
 def get_writer_to_all_result(args, config, custom_path):
-    import time
-    import os
     from pathlib import Path
 
     assert custom_path is not None
-    log_time = time.strftime("%Y%m%d_%H%M%S")
-    Path(custom_path).mkdir(exist_ok=True, parents=True)
-    f_write = open(os.path.join(custom_path, f'{log_time}_results'), 'w+')
+    # Create the directory if it does not exist path includes the file name too
+    os.makedirs(os.path.dirname(custom_path), exist_ok=True)
+    
+    f_write = open(custom_path, 'w+')
     for arg in dir(args):
         if arg[0] != '_':
             f_write.write(f'{arg} {getattr(args, arg)}\n')
@@ -147,4 +147,4 @@ def get_writer_to_all_result(args, config, custom_path):
     f_write.write(f'#############################\n')
     f_write.write('\n')
     f_write.write('\n')
-    return f_write, log_time
+    return f_write

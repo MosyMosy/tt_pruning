@@ -1,7 +1,7 @@
 from utils import parser, dist_utils, misc
 from utils.logger import *
 from utils.config import *
-from tools.tta_prune import source_prune, eval_source
+from tools.tta_prune import source_prune, eval_source, source_prune_analyze
 import time
 import os
 import torch
@@ -86,7 +86,8 @@ def main(args):
     if args.method == "source_only":
         eval_source(args, config)
     elif args.method == 'source_prune':
-        source_prune(args, config)
+        # source_prune(args, config)
+        source_prune_analyze(args, config)
     else:
         raise NotImplementedError
 
