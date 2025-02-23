@@ -86,8 +86,7 @@ def main(args):
     if args.method == "source_only":
         eval_source(args, config)
     elif args.method == 'source_prune':
-        # source_prune(args, config)
-        source_prune_analyze(args, config)
+        source_prune(args, config)
     else:
         raise NotImplementedError
 

@@ -165,7 +165,7 @@ def eval_source(args, config):
                     )
 
 
-def source_prune(args, config, train_writer=None):
+def source_prune(args, config):
     dataset_name = config.dataset.name
     npoints = config.npoints
     logger = get_logger(args.log_name)
@@ -173,51 +173,107 @@ def source_prune(args, config, train_writer=None):
     source_model = load_base_model(args, config, logger)
     source_model.eval()
 
-    clean_intermediates_path = (
-        f"intermediate_features/{dataset_name}_clean_intermediates.pth"
-    )
-    if os.path.exists(clean_intermediates_path):
-        clean_intermediates = torch.load(clean_intermediates_path)
-        clean_intermediates_mean, clean_intermediates_std = (
-            clean_intermediates["mean"],
-            clean_intermediates["std"],
+    if args.method in ["source_prune", "source_prune_analyze"]:
+        clean_intermediates_path = (
+            f"intermediate_features/{dataset_name}_clean_intermediates.pth"
         )
-    else:
-        clean_intermediates = None
-        clean_dataloader = load_clean_dataset(args, config)
-        for i, (_, _, data) in tqdm(
-            enumerate(clean_dataloader), total=len(clean_dataloader)
-        ):
-            points = data[0].cuda()
-            points = misc.fps(points, npoints)
-            intermediates = source_model(points, out_intermediate=True)[1]
-            intermediates = torch.stack(
-                intermediates, dim=0
-            )  # (num_layers, batch_size, tokens, emb_dim)
-            if i == 0:
-                clean_intermediates = intermediates.detach().cpu()
-            else:
-                clean_intermediates = torch.cat(
-                    [clean_intermediates, intermediates.detach().cpu()], dim=1
+        if os.path.exists(clean_intermediates_path):
+            clean_intermediates = torch.load(clean_intermediates_path)
+            clean_intermediates_mean, clean_intermediates_std = (
+                clean_intermediates["mean"],
+                clean_intermediates["std"],
+            )
+        else:
+            clean_intermediates_mean, clean_intermediates_std = (
+                generate_intermediate_embeddings(
+                    args, config, source_model, clean_intermediates_path
                 )
+            )
+            torch.save(
+                {"mean": clean_intermediates_mean.cpu(), "std": clean_intermediates_std.cpu()},
+                clean_intermediates_path,
+            )
+        clean_intermediates_mean = clean_intermediates_mean.cuda()
+        clean_intermediates_std = clean_intermediates_std.cuda()
 
-        clean_intermediates_mean = clean_intermediates.mean(
-            dim=(1, 2)
-        )  # (num_layers, emb_dim)
-        clean_intermediates_std = clean_intermediates.std(
-            dim=(1, 2)
-        )  # (num_layers, emb_dim)
-        torch.save(
-            {"mean": clean_intermediates_mean, "std": clean_intermediates_std},
-            clean_intermediates_path,
+        resutl_file_path = os.path.join(
+            "results_final_tta/",
+            args.method,
+            f"{dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
         )
 
-    resutl_file_path = os.path.join(
-        "results_final_tta/",
-        args.method,
-        f"{dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
-    )
+    if args.method == "source_prune":
+        eval_source_prune(
+            args,
+            config,
+            logger,
+            source_model,
+            clean_intermediates_mean,
+            clean_intermediates_std,
+            resutl_file_path,
+        )
+    elif args.method == "source_prune_analyze":
+        source_prune_analyze(
+            args,
+            config,
+            logger,
+            source_model,
+            clean_intermediates_mean,
+            clean_intermediates_std,
+            resutl_file_path,
+        )
+        
+    
 
+
+def generate_intermediate_embeddings(args, config, source_model):
+    def update_stats(x, count, mean, M2):
+        count += 1
+        delta = x - mean
+        mean = mean + delta / count
+        delta2 = x - mean
+        M2 = M2 + delta * delta2
+        return count, mean, M2
+
+    def finalize_stats(count, mean, M2):
+        if count < 2:
+            # Not enough data points to compute variance
+            return mean, torch.full_like(M2, float('nan'))
+        variance = M2 / (count - 1)
+        std = torch.sqrt(variance)
+        return mean, std
+    
+    
+    clean_dataloader = load_clean_dataset(args, config)
+    count = 0
+    mean = torch.zeros(12, 384, device=source_model.device, dtype=float)
+    M2 = torch.zeros(12, 384, device=source_model.device, dtype=float)
+    for i, (_, _, data) in tqdm(
+        enumerate(clean_dataloader), total=len(clean_dataloader)
+    ):
+        points = data[0].cuda()
+        points = misc.fps(points, config.npoints)
+        intermediates = source_model.module.forward_out_intermediate(points)
+        intermediates = torch.stack(
+            intermediates, dim=0
+        )  # (num_layers, batch_size * tokens, emb_dim)
+        
+        for i in range(intermediates.shape[1]):
+            x = intermediates[:, i, :]  # x has shape (L, C)
+            count, mean, M2 = update_stats(x, count, mean, M2)
+        
+    return finalize_stats(count, mean, M2)
+
+
+def eval_source_prune(
+    args,
+    config,
+    logger,
+    source_model,
+    clean_intermediates_mean,
+    clean_intermediates_std,
+    resutl_file_path,
+):
     for args.severity in level:
         for corr_id, args.corruption in enumerate(corruptions):
             acc_sliding_window = list()
@@ -234,7 +290,9 @@ def source_prune(args, config, train_writer=None):
                     args, config, custom_path=resutl_file_path
                 )
                 f_write.write(f"All Corruptions: {corruptions}" + "\n\n")
-                f_write.write(f"TTA Results for Dataset: {dataset_name}" + "\n\n")
+                f_write.write(
+                    f"TTA Results for Dataset: {config.dataset.name}" + "\n\n"
+                )
                 f_write.write(f"Checkpoint Used: {args.ckpts}" + "\n\n")
                 f_write.write(f"Corruption LEVEL: {args.severity}" + "\n\n")
 
@@ -274,7 +332,7 @@ def source_prune(args, config, train_writer=None):
                 if args.train_with_prune:
                     for grad_step in range(args.grad_steps):
                         points = data.cuda()
-                        points = misc.fps(points, npoints)
+                        points = misc.fps(points, config.npoints)
 
                         # make a batch
                         if idx % args.stride_step == 0 or idx == len(tta_loader) - 1:
@@ -312,9 +370,9 @@ def source_prune(args, config, train_writer=None):
                 base_model.eval()
                 points = data.cuda()
                 labels = labels.cuda()
-                points = misc.fps(points, npoints)
+                points = misc.fps(points, config.npoints)
 
-                logits = base_model(
+                logits = base_model.module.forward_source_prune(
                     points,
                     source_stats=(clean_intermediates_mean, clean_intermediates_std),
                 )
@@ -366,76 +424,18 @@ def source_prune(args, config, train_writer=None):
                     f"Final Results Saved at:",
                     resutl_file_path,
                 )
-                if train_writer is not None:
-                    train_writer.close()
+
+def source_prune_analyze(
+    args,
+    config,
+    logger,
+    source_model,
+    clean_intermediates_mean,
+    clean_intermediates_std,
+    resutl_file_path,):
 
 
-def to_categorical(y, num_classes):
-    """1-hot encodes a tensor"""
-    new_y = torch.eye(num_classes)[y.cpu().data.numpy(),]
-    if y.is_cuda:
-        return new_y.cuda()
-    return new_y
-
-
-
-
-
-def source_prune_analyze(args, config, train_writer=None):
-    dataset_name = config.dataset.name
-    npoints = config.npoints
-    logger = get_logger(args.log_name)
-
-    source_model = load_base_model(args, config, logger)
-    source_model.eval()
-
-    clean_intermediates_path = (
-        f"intermediate_features/{dataset_name}_clean_intermediates.pth"
-    )
-    if os.path.exists(clean_intermediates_path):
-        clean_intermediates = torch.load(clean_intermediates_path)
-        clean_intermediates_mean, clean_intermediates_std = (
-            clean_intermediates["mean"],
-            clean_intermediates["std"],
-        )
-    else:
-        clean_intermediates = None
-        clean_dataloader = load_clean_dataset(args, config)
-        for i, (_, _, data) in tqdm(
-            enumerate(clean_dataloader), total=len(clean_dataloader)
-        ):
-            points = data[0].cuda()
-            points = misc.fps(points, npoints)
-            intermediates = source_model(points, out_intermediate=True)[1]
-            intermediates = torch.stack(
-                intermediates, dim=0
-            )  # (num_layers, batch_size, tokens, emb_dim)
-            if i == 0:
-                clean_intermediates = intermediates.detach().cpu()
-            else:
-                clean_intermediates = torch.cat(
-                    [clean_intermediates, intermediates.detach().cpu()], dim=1
-                )
-
-        clean_intermediates_mean = clean_intermediates.mean(
-            dim=(1, 2)
-        )  # (num_layers, emb_dim)
-        clean_intermediates_std = clean_intermediates.std(
-            dim=(1, 2)
-        )  # (num_layers, emb_dim)
-        torch.save(
-            {"mean": clean_intermediates_mean, "std": clean_intermediates_std},
-            clean_intermediates_path,
-        )
-
-    resutl_file_path = os.path.join(
-        "results_final_tta/",
-        args.method,
-        f"{dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
-    )
-    
     percentiles = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-    
 
     for args.severity in level:
         for corr_id, args.corruption in enumerate(corruptions):
@@ -444,35 +444,37 @@ def source_prune_analyze(args, config, train_writer=None):
                 continue
                 # raise NotImplementedError('Not possible to use tta with clean data, please modify the list above')
 
-            # if corr_id not in [2]:
+            # if corr_id not in [0, 1]:
             #     continue
-            f_write = get_writer_to_all_result(
-                args, config, custom_path=resutl_file_path
-            )
-            f_write.write(f"All Corruptions: {corruptions}" + "\n\n")
-            f_write.write(f"TTA Results for Dataset: {dataset_name}" + "\n\n")
-            f_write.write(f"Checkpoint Used: {args.ckpts}" + "\n\n")
-            f_write.write(f"Corruption LEVEL: {args.severity}" + "\n\n")
-            
-            f_write_analyzr = get_writer_to_all_result(
-                args, config, custom_path=resutl_file_path + "_analyzer.txt"
-            )
-                
-            for perc in percentiles:            
+
+            if corr_id == 0:
+                f_write = get_writer_to_all_result(
+                    args, config, custom_path=resutl_file_path
+                )
+                f_write.write(f"All Corruptions: {corruptions}" + "\n\n")
+                f_write.write(f"TTA Results for Dataset: {config.dataset.name}" + "\n\n")
+                f_write.write(f"Checkpoint Used: {args.ckpts}" + "\n\n")
+                f_write.write(f"Corruption LEVEL: {args.severity}" + "\n\n")
+
+                f_write_analyzr = get_writer_to_all_result(
+                    args, config, custom_path=resutl_file_path + "_analyzer.txt"
+                )
+
+            f_write_analyzr.write(f" ------------ {args.corruption} --------------- \n")
+            f_write.write(f" ------------ {args.corruption} --------------- \n")
+
+            for perc in percentiles:
                 dist_min = []
                 dist_max = []
                 dist_mean = []
                 threshold = []
 
                 # if corr_id == 0:  # for saving results for easy copying to google sheet
-                
 
                 tta_loader = load_tta_dataset(args, config)
                 total_batches = len(tta_loader)
                 test_pred = []
                 test_label = []
-                
-                
 
                 if args.online:
                     base_model = load_base_model(args, config, logger, pretrained=False)
@@ -480,13 +482,14 @@ def source_prune_analyze(args, config, train_writer=None):
                     optimizer = builder.build_opti_sche(base_model, config)[0]
                     args.grad_steps = 1
 
-            
                 for idx, (data, labels) in enumerate(tta_loader):
                     losses = AverageMeter(["Reconstruction Loss"])
 
                     if not args.online:
                         # base_model = load_base_model(args, config, logger)
-                        base_model = load_base_model(args, config, logger, pretrained=False)
+                        base_model = load_base_model(
+                            args, config, logger, pretrained=False
+                        )
                         base_model.load_state_dict(source_model.state_dict())
                         optimizer = builder.build_opti_sche(base_model, config)[0]
                     base_model.zero_grad()
@@ -506,10 +509,13 @@ def source_prune_analyze(args, config, train_writer=None):
                     if args.train_with_prune:
                         for grad_step in range(args.grad_steps):
                             points = data.cuda()
-                            points = misc.fps(points, npoints)
+                            points = misc.fps(points, args.npoints)
 
                             # make a batch
-                            if idx % args.stride_step == 0 or idx == len(tta_loader) - 1:
+                            if (
+                                idx % args.stride_step == 0
+                                or idx == len(tta_loader) - 1
+                            ):
                                 points = [points for _ in range(args.batch_size_tta)]
                                 points = torch.squeeze(torch.vstack(points))
 
@@ -544,14 +550,17 @@ def source_prune_analyze(args, config, train_writer=None):
                     base_model.eval()
                     points = data.cuda()
                     labels = labels.cuda()
-                    points = misc.fps(points, npoints)
-                    
-                    
-                    
-                    logits, (dist_min_, dist_max_, dist_mean_, threshold_) = base_model(
-                        points,
-                        source_stats=(clean_intermediates_mean, clean_intermediates_std),
-                        threshold_percentile=perc
+                    points = misc.fps(points, args.npoints)
+
+                    logits, (dist_min_, dist_max_, dist_mean_, threshold_) = (
+                        base_model.module.forward_analyze(
+                            points,
+                            source_stats=(
+                                clean_intermediates_mean,
+                                clean_intermediates_std,
+                            ),
+                            threshold_percentile=perc,
+                        )
                     )
                     target = labels.view(-1)
                     pred = logits.argmax(-1).view(-1)
@@ -559,7 +568,6 @@ def source_prune_analyze(args, config, train_writer=None):
                     dist_max.append(dist_max_.detach().cpu())
                     dist_mean.append(dist_mean_.detach().cpu())
                     threshold.append(threshold_.detach().cpu())
-                    
 
                     test_pred.append(pred.detach())
                     test_label.append(target.detach())
@@ -582,32 +590,35 @@ def source_prune_analyze(args, config, train_writer=None):
                             f"\n\n\nIntermediate Accuracy - IDX {idx} - {acc:.1f}\n\n\n",
                             logger=logger,
                         )
-                        
 
-            test_pred = torch.cat(test_pred, dim=0)
-            test_label = torch.cat(test_label, dim=0)
-            
-            if args.distributed:
-                test_pred = dist_utils.gather_tensor(test_pred, args)
-                test_label = dist_utils.gather_tensor(test_label, args)
+                test_pred = torch.cat(test_pred, dim=0)
+                test_label = torch.cat(test_label, dim=0)
 
-            acc = (test_pred == test_label).sum() / float(test_label.size(0)) * 100.0
-            dist_min = torch.stack(dist_min, dim=0).mean(dim=0)
-            dist_max = torch.stack(dist_max, dim=0).mean(dim=0)
-            dist_mean = torch.stack(dist_mean, dim=0).mean(dim=0)
-            threshold = torch.stack(threshold, dim=0).mean(dim=0)
-            f_write_analyzr.write(f"{dist_min.item()}, {dist_max.item()}, {dist_mean.item()}, {threshold.item()}, {acc.item()}\n")
+                if args.distributed:
+                    test_pred = dist_utils.gather_tensor(test_pred, args)
+                    test_label = dist_utils.gather_tensor(test_label, args)
 
-            
-            print_log(
-                f"\n\n######## Final Accuracy ::: {args.corruption} ::: {acc} ########\n\n",
-                logger=logger,
-            )
-            f_write.write(" ".join([str(round(float(xx), 3)) for xx in [acc]]) + "\n")
-            
-            
-            f_write.flush()
-            f_write_analyzr.flush()
+                acc = (
+                    (test_pred == test_label).sum() / float(test_label.size(0)) * 100.0
+                )
+                dist_min = torch.stack(dist_min, dim=0).mean(dim=0)
+                dist_max = torch.stack(dist_max, dim=0).mean(dim=0)
+                dist_mean = torch.stack(dist_mean, dim=0).mean(dim=0)
+                threshold = torch.stack(threshold, dim=0).mean(dim=0)
+                f_write_analyzr.write(
+                    f"{dist_min.item()}, {dist_max.item()}, {dist_mean.item()}, {threshold.item()}, {acc.item()}\n"
+                )
+
+                print_log(
+                    f"\n\n######## Final Accuracy ::: {args.corruption} ::: {acc} ########\n\n",
+                    logger=logger,
+                )
+                f_write.write(
+                    " ".join([str(round(float(xx), 3)) for xx in [acc]]) + "\n"
+                )
+
+                f_write.flush()
+                f_write_analyzr.flush()
 
             if corr_id == len(corruptions) - 1:
                 f_write.close()
@@ -617,6 +628,15 @@ def source_prune_analyze(args, config, train_writer=None):
                     f"Final Results Saved at:",
                     resutl_file_path,
                 )
-                if train_writer is not None:
-                    train_writer.close()
+                
+                
+                
+                
+                
 
+def to_categorical(y, num_classes):
+    """1-hot encodes a tensor"""
+    new_y = torch.eye(num_classes)[y.cpu().data.numpy(),]
+    if y.is_cuda:
+        return new_y.cuda()
+    return new_y

@@ -1739,7 +1739,8 @@ class PointTransformer_prune(nn.Module):
                 k.replace("module.", ""): v for k, v in ckpt["base_model"].items()
             }
             base_ckpt = {
-                k.replace("class_head.8.custom_last_layer_name", "class_head.8"): v for k, v in base_ckpt.items()
+                k.replace("class_head.8.custom_last_layer_name", "class_head.8"): v
+                for k, v in base_ckpt.items()
             }
 
             for k in list(base_ckpt.keys()):
@@ -1749,7 +1750,6 @@ class PointTransformer_prune(nn.Module):
                 elif k.startswith("base_model"):
                     base_ckpt[k[len("base_model.") :]] = base_ckpt[k]
                     del base_ckpt[k]
-
 
             incompatible = self.load_state_dict(base_ckpt, strict=False)
 
@@ -1787,7 +1787,7 @@ class PointTransformer_prune(nn.Module):
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
-    def forward_(self, pts, out_intermediate=False, source_stats=None, threshold_percentile=20):
+    def forward(self, pts):
         neighborhood, center = self.group_divider(pts)
         group_input_tokens = self.encoder(neighborhood)  # B G N
         cls_tokens = self.cls_token.expand(group_input_tokens.size(0), -1, -1)
@@ -1798,16 +1798,13 @@ class PointTransformer_prune(nn.Module):
         x = torch.cat((cls_tokens, group_input_tokens), dim=1)
         pos = torch.cat((cls_pos, pos), dim=1)
         # transformer
-        x, intermediates = self.blocks(x, pos, out_intermediate, source_stats)
+        x = self.blocks(x, pos)[0]
         x = self.norm(x)
         concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
         ret = self.class_head(concat_f)
-
-        if out_intermediate:
-            return ret, intermediates
         return ret
-    
-    def forward(self, pts, out_intermediate=False, source_stats=None, threshold_percentile=20):
+
+    def forward_out_intermediate(self, pts):
         neighborhood, center = self.group_divider(pts)
         group_input_tokens = self.encoder(neighborhood)  # B G N
         cls_tokens = self.cls_token.expand(group_input_tokens.size(0), -1, -1)
@@ -1818,14 +1815,65 @@ class PointTransformer_prune(nn.Module):
         x = torch.cat((cls_tokens, group_input_tokens), dim=1)
         pos = torch.cat((cls_pos, pos), dim=1)
         # transformer
-        x, intermediates, (dist_min, dist_max, dist_mean, threshold) = self.blocks(x, pos, out_intermediate, source_stats, threshold_percentile=threshold_percentile)
+        intermediates = self.blocks.forward_out_intermediate(x, pos)
+
+        return intermediates
+
+    def forward_analyze(self, pts, source_stats=None, threshold_percentile=20):
+        neighborhood, center = self.group_divider(pts)
+        group_input_tokens = self.encoder(neighborhood)  # B G N
+        cls_tokens = self.cls_token.expand(group_input_tokens.size(0), -1, -1)
+        cls_pos = self.cls_pos.expand(group_input_tokens.size(0), -1, -1)
+
+        pos = self.pos_embed(center)
+
+        x = torch.cat((cls_tokens, group_input_tokens), dim=1)
+        pos = torch.cat((cls_pos, pos), dim=1)
+        # transformer
+        x, (dist_min, dist_max, dist_mean, threshold) = self.blocks.forward_analyze(
+            x, pos, source_stats, threshold_percentile=threshold_percentile
+        )
         x = self.norm(x)
         concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
         ret = self.class_head(concat_f)
 
-        if out_intermediate:
-            return ret, intermediates
         return ret, (dist_min, dist_max, dist_mean, threshold)
+
+    def forward_source_prune(self, pts, source_stats=None):
+        neighborhood, center = self.group_divider(pts)
+        group_input_tokens = self.encoder(neighborhood)  # B G N
+        cls_tokens = self.cls_token.expand(group_input_tokens.size(0), -1, -1)
+        cls_pos = self.cls_pos.expand(group_input_tokens.size(0), -1, -1)
+
+        pos = self.pos_embed(center)
+
+        x = torch.cat((cls_tokens, group_input_tokens), dim=1)
+        pos = torch.cat((cls_pos, pos), dim=1)
+        # transformer
+        x = self.blocks.forward_source_prune(x, pos, source_stats)
+        x = self.norm(x)
+        concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
+        ret = self.class_head(concat_f)
+
+        return ret
+
+    def forward_target_prune(self, pts):
+        neighborhood, center = self.group_divider(pts)
+        group_input_tokens = self.encoder(neighborhood)  # B G N
+        cls_tokens = self.cls_token.expand(group_input_tokens.size(0), -1, -1)
+        cls_pos = self.cls_pos.expand(group_input_tokens.size(0), -1, -1)
+
+        pos = self.pos_embed(center)
+
+        x = torch.cat((cls_tokens, group_input_tokens), dim=1)
+        pos = torch.cat((cls_pos, pos), dim=1)
+        # transformer
+        x = self.blocks.forward_target_prune(x, pos)
+        x = self.norm(x)
+        concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
+        ret = self.class_head(concat_f)
+
+        return ret
 
 
 class TransformerEncoder_prune(nn.Module):
@@ -1863,9 +1911,26 @@ class TransformerEncoder_prune(nn.Module):
             ]
         )
 
-    # to analyze
-    def forward(self, x, pos, out_intermediate=False, source_stats=None, threshold_percentile=20):
+    def forward(self, x, pos):
+        feature_list = []
+        fetch_idx = [3, 7, 11]
+        for i, block in enumerate(self.blocks):
+            x = block(x + pos)
+            if i in fetch_idx:
+                feature_list.append(x)
+        return x, feature_list
+
+    def forward_out_intermediate(self, x, pos):
         intermediates = []
+        for i, block in enumerate(self.blocks):
+            x = block(x + pos)
+            x_ = (x + pos)[:, 1:, :]  # remove the [CLS] token
+            x_ = x_ - x_.mean(dim=(2), keepdim=True)
+            x_ = x_ / (x_.std(dim=(2), keepdim=True) + 1e-6)
+            intermediates.append(x_)
+        return intermediates
+
+    def forward_analyze(self, x, pos, source_stats=None, threshold_percentile=20):
         for i, block in enumerate(self.blocks):
             if source_stats is not None:
                 thresholds = [
@@ -1895,7 +1960,7 @@ class TransformerEncoder_prune(nn.Module):
                     dist_min = x_distance.min()
                     dist_max = x_distance.max()
                     dist_mean = x_distance.mean()
-                    threshold =dist_min + (dist_max - dist_min) * threshold_percentile
+                    threshold = dist_min + (dist_max - dist_min) * threshold_percentile
                     x_mask = x_distance <= threshold
                     # x_mask = x_distance <= 1.2
                     # remove the tokens from x based on the mask
@@ -1909,91 +1974,58 @@ class TransformerEncoder_prune(nn.Module):
 
             x = block(x + pos)
 
-            if out_intermediate:
-                x_ = (x + pos)[:, 1:, :]  # remove the [CLS] token
+        return x, (dist_min, dist_max, dist_mean, threshold)
+
+    def forward_source_prune(self, x, pos, source_stats):
+        for i, block in enumerate(self.blocks):
+            if i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]:
+                surce_mean = source_stats[0][i][None, None, :]
+                surce_std = source_stats[1][i][None, None, :]
+
+                x_ = x[:, 1:] + pos[:, 1:]  # No CLS Token
                 x_ = x_ - x_.mean(dim=(2), keepdim=True)
                 x_ = x_ / (x_.std(dim=(2), keepdim=True) + 1e-6)
-                intermediates.append(x_)
-        return x, intermediates, (dist_min, dist_max, dist_mean, threshold)
 
-    def forward__(self, x, pos, out_intermediate=False, source_stats=None):
-        intermediates = []
-        for i, block in enumerate(self.blocks):
-            if source_stats is not None:
-                thresholds = [
-                    1.8,
-                    1.7,
-                    1.6,
-                    1.5,
-                    1.4,
-                    1.3,
-                    1.2,
-                    1.1,
-                    1.0,
-                    0.9,
-                    0.8,
-                    0.7,
-                ]
-                if i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]:
-                    surce_mean = source_stats[0][i][None, None, :]
-                    surce_std = source_stats[1][i][None, None, :]
+                x_distance = misc.mahalanobis_distance(x_, surce_mean, surce_std)
+                # z_score = (x_distance - x_distance.mean()) / x_distance.std()
+                x_mask = x_distance <= max(
+                    misc.best_threshold_model(x_distance), x_distance.min() + 2
+                )  # misc.dynamic_threshold(x_distance, 25, k=1, max_multiplier=1)
+                # x_mask = x_distance <= 1.2
+                # remove the tokens from x based on the mask
+                masked_x = x[:, 1:][0][x_mask[0]].unsqueeze(0)
 
-                    x_ = x[:, 1:] + pos[:, 1:]  # No CLS Token
-                    x_ = x_ - x_.mean(dim=(2), keepdim=True)
-                    x_ = x_ / (x_.std(dim=(2), keepdim=True) + 1e-6)
-
-                    x_distance = misc.mahalanobis_distance(x_, surce_mean, surce_std)
-                    # z_score = (x_distance - x_distance.mean()) / x_distance.std()
-                    x_mask = x_distance <= max(
-                        22, x_distance.mean()
-                    )  # misc.dynamic_threshold(x_distance, 25, k=1, max_multiplier=1)
-                    # x_mask = x_distance <= 1.2
-                    # remove the tokens from x based on the mask
-                    masked_x = x[:, 1:][0][x_mask[0]].unsqueeze(0)
-
-                    x = torch.cat([x[:, 0:1], masked_x], dim=1)
-                    pos = torch.cat(
-                        [pos[:, 0:1], pos[:, 1:][0][x_mask[0]].unsqueeze(0)], dim=1
-                    )
-                    # x = x * x_mask
+                x = torch.cat([x[:, 0:1], masked_x], dim=1)
+                pos = torch.cat(
+                    [pos[:, 0:1], pos[:, 1:][0][x_mask[0]].unsqueeze(0)], dim=1
+                )
+                # x = x * x_mask
 
             x = block(x + pos)
 
-            if out_intermediate:
-                x_ = (x + pos)[:, 1:, :]  # remove the [CLS] token
-                x_ = x_ - x_.mean(dim=(2), keepdim=True)
-                x_ = x_ / (x_.std(dim=(2), keepdim=True) + 1e-6)
-                intermediates.append(x_)
-        return x, intermediates
+        return x
 
-    def forward_(self, x, pos, out_intermediate=False, source_stats=None):
-        intermediates = []
+    def forward_target_prune(self, x, pos):
         for i, block in enumerate(self.blocks):
-            if source_stats is not None:
-                if i in [0]:
-                    cls_token = x[:, 0:1]
+            if i in [0]:
+                cls_token = x[:, 0:1]
 
-                    x_ = x[:, 1:]  # No CLS Token
+                x_ = x[:, 1:]  # No CLS Token
 
-                    x_distance = misc.euclidean_distance(x_, cls_token)
-                    # x_distance = (x_distance - x_distance.min()) / (x_distance.max() - x_distance.min())
-                    x_mask = x_distance <= max(25.0, x_distance.mean())
-                    # x_mask = x_distance <= 1.2
-                    # remove the tokens from x based on the mask
-                    masked_x = x[:, 1:][0][x_mask[0]].unsqueeze(0)
+                x_distance = misc.euclidean_distance(x_, cls_token)
+                # x_distance = (x_distance - x_distance.min()) / (x_distance.max() - x_distance.min())
+                x_mask = x_distance <= max(25.0, x_distance.mean())
+                # x_mask = x_distance <= 1.2
+                # remove the tokens from x based on the mask
+                masked_x = x[:, 1:][0][x_mask[0]].unsqueeze(0)
 
-                    x = torch.cat([x[:, 0:1], masked_x], dim=1)
-                    pos = torch.cat(
-                        [pos[:, 0:1], pos[:, 1:][0][x_mask[0]].unsqueeze(0)], dim=1
-                    )
+                x = torch.cat([x[:, 0:1], masked_x], dim=1)
+                pos = torch.cat(
+                    [pos[:, 0:1], pos[:, 1:][0][x_mask[0]].unsqueeze(0)], dim=1
+                )
 
-                    # x = x * x_mask
+                # x = x * x_mask
 
             x = block(x + pos)
 
-            if out_intermediate:
-                x_ = (x + pos)[:, 1:, :]  # remove the [CLS] token
-                x_ = x_ - x_.mean(dim=(2), keepdim=True)
-                x_ = x_ / (x_.std(dim=(2), keepdim=True) + 1e-6)
-                intermediates.append(x_)
-        return x, intermediates
+        return x
