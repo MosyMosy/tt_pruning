@@ -186,7 +186,7 @@ def source_prune(args, config):
         else:
             clean_intermediates_mean, clean_intermediates_std = (
                 generate_intermediate_embeddings(
-                    args, config, source_model, clean_intermediates_path
+                    args, config, source_model
                 )
             )
             torch.save(
@@ -246,14 +246,15 @@ def generate_intermediate_embeddings(args, config, source_model):
     
     clean_dataloader = load_clean_dataset(args, config)
     count = 0
-    mean = torch.zeros(12, 384, device=source_model.device, dtype=float)
-    M2 = torch.zeros(12, 384, device=source_model.device, dtype=float)
+    mean = torch.zeros(12, 384, dtype=float)
+    M2 = torch.zeros(12, 384, dtype=float)
     for i, (_, _, data) in tqdm(
         enumerate(clean_dataloader), total=len(clean_dataloader)
     ):
         points = data[0].cuda()
         points = misc.fps(points, config.npoints)
-        intermediates = source_model.module.forward_out_intermediate(points)
+        with torch.no_grad():
+            intermediates = source_model.module.forward_out_intermediate(points)
         intermediates = torch.stack(
             intermediates, dim=0
         )  # (num_layers, batch_size * tokens, emb_dim)
