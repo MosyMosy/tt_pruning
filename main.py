@@ -76,9 +76,9 @@ def main(args):
     assert args.ckpts is not None
     assert dataset_name is not None
 
-    args.disable_bn_adaptation = True
-    args.batch_size_tta = 48
-    args.batch_size = 1
+    # args.disable_bn_adaptation = True
+    # args.batch_size_tta = 48
+    # args.batch_size = 1
     # config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
     config.model.group_norm = args.group_norm
 

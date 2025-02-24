@@ -7,12 +7,12 @@ def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--mask_ratio', type=float, default= 0.9)
     parser.add_argument('--alpha', type=float, default= 0.0)
-    parser.add_argument('--batch_size_tta', type=int, default=48)
+    parser.add_argument('--batch_size_tta', type=int, default=1)
     parser.add_argument('--stride_step', type=int, default=1)
-    parser.add_argument('--batch_size', type=int, default=1)
+    parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--grad_steps', type=int, default=1)
-    parser.add_argument('--disable_bn_adaptation', action='store_true', help='to disable bn_for adaptation')
-    parser.add_argument('--online', action='store_true', default=True, help='online-adapt')
+    parser.add_argument('--disable_bn_adaptation', action='store_true', default=False, help='to disable bn_for adaptation')
+    parser.add_argument('--online', action='store_true', default=False, help='online-adapt')
     parser.add_argument('--visualize_data', action='store_true', help='image creation')
     parser.add_argument('--ckpts', type=str, default="checkpoints/modelnet_src_only.pth", help='test used ckpt path') #default="checkpoints/modelnet_src_only.pth", help='test used ckpt path'
     parser.add_argument('--config', type=str, default="cfgs/tta_prune/tta_prune_modelnet.yaml", help='yaml config file')
@@ -95,9 +95,15 @@ def get_args():
         '--fold', type=int, default=-1)
     parser.add_argument(
         '--train_with_prune', action='store_true',
-        default=False)
+        default=True)
     parser.add_argument(
         '--method', type=str, choices=["source_only", "source_prune", "source_prune_tent"], default="source_prune")
+
+    parser.add_argument('--tent_LR', type=float, default=1e-3)   
+    #parser.add_argument('--LR', type=float, default= 0.005)                      
+    parser.add_argument('--tent_BETA', type=int, default=0.9)
+    parser.add_argument('--tent_WD', type=int, default=0.)
+
 
     args = parser.parse_args()
 

@@ -10,6 +10,8 @@ from utils.rotnet_utils import rotate_batch
 import utils.tent_shot as tent_shot_utils
 import utils.t3a as t3a_utils
 from utils.misc import *
+import torch.optim as optim
+
 
 level = [5]
 
@@ -185,12 +187,13 @@ def source_prune(args, config):
             )
         else:
             clean_intermediates_mean, clean_intermediates_std = (
-                generate_intermediate_embeddings(
-                    args, config, source_model
-                )
+                generate_intermediate_embeddings(args, config, source_model)
             )
             torch.save(
-                {"mean": clean_intermediates_mean.cpu(), "std": clean_intermediates_std.cpu()},
+                {
+                    "mean": clean_intermediates_mean.cpu(),
+                    "std": clean_intermediates_std.cpu(),
+                },
                 clean_intermediates_path,
             )
         clean_intermediates_mean = clean_intermediates_mean.cuda()
@@ -222,8 +225,6 @@ def source_prune(args, config):
             clean_intermediates_std,
             resutl_file_path,
         )
-        
-    
 
 
 def generate_intermediate_embeddings(args, config, source_model):
@@ -238,12 +239,11 @@ def generate_intermediate_embeddings(args, config, source_model):
     def finalize_stats(count, mean, M2):
         if count < 2:
             # Not enough data points to compute variance
-            return mean, torch.full_like(M2, float('nan'))
+            return mean, torch.full_like(M2, float("nan"))
         variance = M2 / (count - 1)
         std = torch.sqrt(variance)
         return mean, std
-    
-    
+
     clean_dataloader = load_clean_dataset(args, config)
     count = 0
     mean = torch.zeros(12, 384, dtype=float)
@@ -258,13 +258,43 @@ def generate_intermediate_embeddings(args, config, source_model):
         intermediates = torch.stack(
             intermediates, dim=0
         )  # (num_layers, batch_size * tokens, emb_dim)
-        
+
         for i in range(intermediates.shape[1]):
             x = intermediates[:, i, :]  # x has shape (L, C)
             count, mean, M2 = update_stats(x, count, mean, M2)
-        
+
     return finalize_stats(count, mean, M2)
 
+@torch.jit.script
+def softmax_entropy(x: torch.Tensor) -> torch.Tensor:
+    """Entropy of softmax distribution from logits."""
+    return -(x.softmax(1) * x.log_softmax(1)).sum(1)
+
+def setup_tent_optimizer(model, args):
+    model.requires_grad_(False)
+    for m in model.modules():
+        if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
+            m.requires_grad_(True)
+            m.track_running_stats = False # for original implementation this is False
+            m.running_mean = None # for original implementation uncomment this
+            m.running_var = None # for original implementation uncomment this
+        # if isinstance(m, torch.nn.LayerNorm):
+        #     m.requires_grad_(True)
+        
+    params = []
+    names = []
+    for nm, m in model.named_modules():
+        if isinstance(m, torch.nn.modules.batchnorm._BatchNorm): # or isinstance(m, torch.nn.LayerNorm):
+            for np, p in m.named_parameters():
+                if np in ['weight', 'bias']:  # weight is scale gamma, bias is shift beta
+                    params.append(p)
+                    names.append(f"{nm}.{np}")
+                        
+    optimizer = optim.Adam(params,
+                      lr=args.tent_LR,
+                      betas=(args.tent_BETA, 0.999),
+                      weight_decay=args.tent_WD)
+    return model, optimizer
 
 def eval_source_prune(
     args,
@@ -283,7 +313,7 @@ def eval_source_prune(
                 continue
                 # raise NotImplementedError('Not possible to use tta with clean data, please modify the list above')
 
-            # if corr_id not in [2]:
+            # if corr_id not in [ 2]:
             #     continue
 
             if corr_id == 0:  # for saving results for easy copying to google sheet
@@ -305,7 +335,7 @@ def eval_source_prune(
             if args.online:
                 base_model = load_base_model(args, config, logger, pretrained=False)
                 base_model.load_state_dict(source_model.state_dict())
-                optimizer = builder.build_opti_sche(base_model, config)[0]
+                base_model, optimizer =setup_tent_optimizer(base_model, args)
                 args.grad_steps = 1
 
             for idx, (data, labels) in enumerate(tta_loader):
@@ -315,37 +345,37 @@ def eval_source_prune(
                     # base_model = load_base_model(args, config, logger)
                     base_model = load_base_model(args, config, logger, pretrained=False)
                     base_model.load_state_dict(source_model.state_dict())
-                    optimizer = builder.build_opti_sche(base_model, config)[0]
-                base_model.zero_grad()
-                base_model.train()
-                if args.disable_bn_adaptation:  # disable statistical alignment
-                    for m in base_model.modules():
-                        if (
-                            isinstance(m, nn.BatchNorm2d)
-                            or isinstance(m, nn.BatchNorm1d)
-                            or isinstance(m, nn.BatchNorm3d)
-                        ):
-                            m.eval()
-                else:
-                    pass
+                    base_model, optimizer  =setup_tent_optimizer(base_model, args)
 
                 # TTA Loop (for N grad steps)
                 if args.train_with_prune:
+                    base_model.zero_grad()
+                    base_model.train()
+                    if args.disable_bn_adaptation:  # disable statistical alignment
+                        for m in base_model.modules():
+                            if (
+                                isinstance(m, nn.BatchNorm2d)
+                                or isinstance(m, nn.BatchNorm1d)
+                                or isinstance(m, nn.BatchNorm3d)
+                            ):
+                                m.eval()
                     for grad_step in range(args.grad_steps):
                         points = data.cuda()
-                        points = misc.fps(points, config.npoints)
-
                         # make a batch
+                        points = [
+                            misc.fps(points, config.npoints, random_start_point=True)
+                            for _ in range(args.batch_size_tta)
+                        ]
+                        points = torch.cat(points, dim=0)
+                        
                         if idx % args.stride_step == 0 or idx == len(tta_loader) - 1:
-                            points = [points for _ in range(args.batch_size_tta)]
-                            points = torch.squeeze(torch.vstack(points))
-
-                            loss_recon, loss_p_consistency, loss_regularize = (
-                                base_model(points)
+                            logits = base_model.module.forward_source_prune(
+                                points,
+                                source_stats=(clean_intermediates_mean, clean_intermediates_std),
                             )
-                            loss = loss_recon + (
-                                args.alpha * loss_regularize
-                            )  # + (0.0001 * loss_p_consistency)
+                            # tent loss calculation to minimize the entropy of the logits
+                            loss = softmax_entropy(logits)                            
+                            
                             loss = loss.mean()
                             loss.backward()
                             optimizer.step()
@@ -369,14 +399,15 @@ def eval_source_prune(
 
                 # now inferring on this one sample
                 base_model.eval()
+
                 points = data.cuda()
                 labels = labels.cuda()
                 points = misc.fps(points, config.npoints)
-
-                logits = base_model.module.forward_source_prune(
-                    points,
-                    source_stats=(clean_intermediates_mean, clean_intermediates_std),
-                )
+                with torch.no_grad():
+                    logits = base_model.module.forward_source_prune(
+                        points,
+                        source_stats=(clean_intermediates_mean, clean_intermediates_std),
+                    )
                 target = labels.view(-1)
                 pred = logits.argmax(-1).view(-1)
 
@@ -426,6 +457,7 @@ def eval_source_prune(
                     resutl_file_path,
                 )
 
+
 def source_prune_analyze(
     args,
     config,
@@ -433,9 +465,8 @@ def source_prune_analyze(
     source_model,
     clean_intermediates_mean,
     clean_intermediates_std,
-    resutl_file_path,):
-
-
+    resutl_file_path,
+):
     percentiles = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 
     for args.severity in level:
@@ -453,7 +484,9 @@ def source_prune_analyze(
                     args, config, custom_path=resutl_file_path
                 )
                 f_write.write(f"All Corruptions: {corruptions}" + "\n\n")
-                f_write.write(f"TTA Results for Dataset: {config.dataset.name}" + "\n\n")
+                f_write.write(
+                    f"TTA Results for Dataset: {config.dataset.name}" + "\n\n"
+                )
                 f_write.write(f"Checkpoint Used: {args.ckpts}" + "\n\n")
                 f_write.write(f"Corruption LEVEL: {args.severity}" + "\n\n")
 
@@ -629,11 +662,7 @@ def source_prune_analyze(
                     f"Final Results Saved at:",
                     resutl_file_path,
                 )
-                
-                
-                
-                
-                
+
 
 def to_categorical(y, num_classes):
     """1-hot encodes a tensor"""

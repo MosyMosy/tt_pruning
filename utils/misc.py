@@ -471,6 +471,6 @@ def best_threshold_model(distances):
     mean_val = distances.mean().item()
     return (
         25
-        if ((max_val - min_val) > 6.5)
+        if ((max_val - min_val) > 6.6)
         else max_val * 2
     )
