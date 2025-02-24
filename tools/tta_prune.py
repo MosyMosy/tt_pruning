@@ -29,7 +29,7 @@ def load_tta_dataset(args, config):
                 dataset=inference_dataset,
                 batch_size=args.batch_size,
                 shuffle=args.shuffle,
-                drop_last=True,
+                drop_last=False,
             )
         else:
             inference_dataset = tta_datasets.ModelNet40C(args, root)
@@ -37,7 +37,7 @@ def load_tta_dataset(args, config):
                 dataset=inference_dataset,
                 batch_size=args.batch_size,
                 shuffle=args.shuffle,
-                drop_last=True,
+                drop_last=False,
             )
 
     elif config.dataset.name == "scanobject":
@@ -46,7 +46,7 @@ def load_tta_dataset(args, config):
             inference_dataset,
             batch_size=args.batch_size,
             shuffle=args.shuffle,
-            drop_last=True,
+            drop_last=False,
         )
 
     elif config.dataset.name == "shapenetcore":
@@ -55,7 +55,7 @@ def load_tta_dataset(args, config):
             inference_dataset,
             batch_size=args.batch_size,
             shuffle=args.shuffle,
-            drop_last=True,
+            drop_last=False,
         )
 
     else:
@@ -175,7 +175,7 @@ def source_prune(args, config):
     source_model = load_base_model(args, config, logger)
     source_model.eval()
 
-    if args.method in ["source_prune", "source_prune_analyze"]:
+    if args.method in ["source_prune", "source_prune_adapt", "source_prune_analyze"]:
         clean_intermediates_path = (
             f"intermediate_features/{dataset_name}_clean_intermediates.pth"
         )
@@ -199,13 +199,23 @@ def source_prune(args, config):
         clean_intermediates_mean = clean_intermediates_mean.cuda()
         clean_intermediates_std = clean_intermediates_std.cuda()
 
-        resutl_file_path = os.path.join(
-            "results_final_tta/",
-            args.method,
-            f"{dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
-        )
+    else:
+        clean_intermediates_mean, clean_intermediates_std = None, None
 
-    if args.method == "source_prune":
+    resutl_file_path = os.path.join(
+        "results_final_tta/",
+        args.method,
+        f"{dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
+    )
+
+    if args.method in [
+        "source_prune",
+        "source_prune_adapt",
+        "target_prune",
+        "target_prune_adapt",
+        "source_only",
+        "tent",
+    ]:
         eval_source_prune(
             args,
             config,
@@ -225,6 +235,8 @@ def source_prune(args, config):
             clean_intermediates_std,
             resutl_file_path,
         )
+    else:
+        raise NotImplementedError(f"Method {args.method} not implemented")
 
 
 def generate_intermediate_embeddings(args, config, source_model):
@@ -265,36 +277,82 @@ def generate_intermediate_embeddings(args, config, source_model):
 
     return finalize_stats(count, mean, M2)
 
+
 @torch.jit.script
 def softmax_entropy(x: torch.Tensor) -> torch.Tensor:
     """Entropy of softmax distribution from logits."""
     return -(x.softmax(1) * x.log_softmax(1)).sum(1)
+
 
 def setup_tent_optimizer(model, args):
     model.requires_grad_(False)
     for m in model.modules():
         if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
             m.requires_grad_(True)
-            m.track_running_stats = False # for original implementation this is False
-            m.running_mean = None # for original implementation uncomment this
-            m.running_var = None # for original implementation uncomment this
+            m.track_running_stats = False  # for original implementation this is False
+            m.running_mean = None  # for original implementation uncomment this
+            m.running_var = None  # for original implementation uncomment this
         # if isinstance(m, torch.nn.LayerNorm):
         #     m.requires_grad_(True)
-        
+
     params = []
     names = []
     for nm, m in model.named_modules():
-        if isinstance(m, torch.nn.modules.batchnorm._BatchNorm): # or isinstance(m, torch.nn.LayerNorm):
+        if isinstance(
+            m, torch.nn.modules.batchnorm._BatchNorm
+        ):  # or isinstance(m, torch.nn.LayerNorm):
             for np, p in m.named_parameters():
-                if np in ['weight', 'bias']:  # weight is scale gamma, bias is shift beta
+                if np in [
+                    "weight",
+                    "bias",
+                ]:  # weight is scale gamma, bias is shift beta
                     params.append(p)
                     names.append(f"{nm}.{np}")
-                        
-    optimizer = optim.Adam(params,
-                      lr=args.tent_LR,
-                      betas=(args.tent_BETA, 0.999),
-                      weight_decay=args.tent_WD)
+
+    optimizer = optim.Adam(
+        params,
+        lr=args.tent_LR,
+        betas=(args.tent_BETA, 0.999),
+        weight_decay=args.tent_WD,
+    )
     return model, optimizer
+
+
+def setup_prune_optimizer(model, args):
+    model.requires_grad_(False)
+    for m in model.modules():
+        if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
+            # m.requires_grad_(True)
+            m.track_running_stats = False  # for original implementation this is False
+            m.running_mean = None  # for original implementation uncomment this
+            m.running_var = None  # for original implementation uncomment this
+    for m in model.modules():
+        if isinstance(m, torch.nn.LayerNorm):
+            m.requires_grad_(True)
+    model.module.class_head.requires_grad_(True)
+
+    params = []
+    names = []
+    for nm, m in model.named_modules():
+        if isinstance(
+            m, torch.nn.modules.batchnorm._BatchNorm
+        ):  # or isinstance(m, torch.nn.LayerNorm):
+            for np, p in m.named_parameters():
+                if np in [
+                    "weight",
+                    "bias",
+                ]:  # weight is scale gamma, bias is shift beta
+                    params.append(p)
+                    names.append(f"{nm}.{np}")
+
+    optimizer = optim.Adam(
+        params,
+        lr=args.tent_LR,
+        betas=(args.tent_BETA, 0.999),
+        weight_decay=args.tent_WD,
+    )
+    return model, optimizer
+
 
 def eval_source_prune(
     args,
@@ -332,23 +390,37 @@ def eval_source_prune(
             test_pred = []
             test_label = []
 
-            if args.online:
-                base_model = load_base_model(args, config, logger, pretrained=False)
-                base_model.load_state_dict(source_model.state_dict())
-                base_model, optimizer =setup_tent_optimizer(base_model, args)
-                args.grad_steps = 1
+            if args.method in [
+                "source_prune",
+                "target_prune",
+                "source_prune_adapt",
+                "target_prune_adapt",
+            ]:
+                setup_optimizer = setup_prune_optimizer
+            elif args.method == "tent":
+                setup_optimizer = setup_tent_optimizer
 
+            base_model = load_base_model(args, config, logger, pretrained=False)
+            base_model.load_state_dict(source_model.state_dict())
+            base_model, optimizer = setup_optimizer(base_model, args)
             for idx, (data, labels) in enumerate(tta_loader):
                 losses = AverageMeter(["Reconstruction Loss"])
 
-                if not args.online:
-                    # base_model = load_base_model(args, config, logger)
-                    base_model = load_base_model(args, config, logger, pretrained=False)
-                    base_model.load_state_dict(source_model.state_dict())
-                    base_model, optimizer  =setup_tent_optimizer(base_model, args)
-
                 # TTA Loop (for N grad steps)
-                if args.train_with_prune:
+                if args.method in ["tent", "source_prune_adapt", "target_prune_adapt"]:
+                    if (not args.online) and idx != 0:
+                        base_model = load_base_model(
+                            args, config, logger, pretrained=False
+                        )
+                        base_model.load_state_dict(source_model.state_dict())
+                        base_model, optimizer = setup_optimizer(base_model, args)
+
+                    elif (
+                        args.online and idx == 0
+                    ):  # for the first sample in online mode
+                        base_model, optimizer = setup_optimizer(base_model, args)
+                        args.grad_steps = 1
+
                     base_model.zero_grad()
                     base_model.train()
                     if args.disable_bn_adaptation:  # disable statistical alignment
@@ -359,6 +431,7 @@ def eval_source_prune(
                                 or isinstance(m, nn.BatchNorm3d)
                             ):
                                 m.eval()
+
                     for grad_step in range(args.grad_steps):
                         points = data.cuda()
                         # make a batch
@@ -367,15 +440,26 @@ def eval_source_prune(
                             for _ in range(args.batch_size_tta)
                         ]
                         points = torch.cat(points, dim=0)
-                        
+
                         if idx % args.stride_step == 0 or idx == len(tta_loader) - 1:
-                            logits = base_model.module.forward_source_prune(
-                                points,
-                                source_stats=(clean_intermediates_mean, clean_intermediates_std),
-                            )
+                            if args.method == "tent":
+                                logits = base_model(points)
+                            elif args.method == "source_prune_adapt":
+                                logits = base_model.module.forward_source_prune(
+                                    points,
+                                    source_stats=(
+                                        clean_intermediates_mean,
+                                        clean_intermediates_std,
+                                    ),
+                                )
+                            elif args.method == "target_prune_adapt":
+                                logits = base_model.module.forward_target_prune(
+                                    points,
+                                )
+
                             # tent loss calculation to minimize the entropy of the logits
-                            loss = softmax_entropy(logits)                            
-                            
+                            loss = softmax_entropy(logits)
+
                             loss = loss.mean()
                             loss.backward()
                             optimizer.step()
@@ -392,8 +476,7 @@ def eval_source_prune(
 
                         print_log(
                             f"[TEST - {args.corruption}], Sample - {idx} / {total_batches},"
-                            f"GradStep - {grad_step} / {args.grad_steps},"
-                            f"Reconstruction Loss {[l for l in losses.val()]}",
+                            f"GradStep - {grad_step} / {args.grad_steps},",
                             logger=logger,
                         )
 
@@ -402,12 +485,32 @@ def eval_source_prune(
 
                 points = data.cuda()
                 labels = labels.cuda()
-                points = misc.fps(points, config.npoints)
+                points = [
+                    misc.fps(points, config.npoints, random_start_point=True)
+                    for _ in range(args.batch_size_tta)
+                ]
+                points = torch.cat(points, dim=0)
+                
+                labels = [
+                    labels
+                    for _ in range(args.batch_size_tta)
+                ]
+                labels = torch.cat(labels, dim=0)
+
                 with torch.no_grad():
-                    logits = base_model.module.forward_source_prune(
-                        points,
-                        source_stats=(clean_intermediates_mean, clean_intermediates_std),
-                    )
+                    if args.method in ["source_only", "tent"]:
+                        logits = base_model(points)
+                    elif args.method in ["source_prune", "source_prune_adapt"]:
+                        logits = base_model.module.forward_source_prune(
+                            points,
+                            source_stats=(
+                                clean_intermediates_mean,
+                                clean_intermediates_std,
+                            ),
+                        )
+                    elif args.method in ["target_prune", "target_prune_adapt"]:
+                        logits = base_model.module.forward_target_prune(points)
+
                 target = labels.view(-1)
                 pred = logits.argmax(-1).view(-1)
 

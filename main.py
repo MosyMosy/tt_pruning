@@ -83,12 +83,12 @@ def main(args):
     config.model.group_norm = args.group_norm
 
     args.split = 'test'
-    if args.method == "source_only":
-        eval_source(args, config)
-    elif args.method == 'source_prune':
-        source_prune(args, config)
-    else:
-        raise NotImplementedError
+    # if args.method == "source_only":
+    #     eval_source(args, config)
+    # elif args.method == 'source_prune':
+    source_prune(args, config)
+    # else:
+    #     raise NotImplementedError
 
 
 if __name__ == '__main__':

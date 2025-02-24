@@ -326,36 +326,9 @@ class TransformerEncoder(nn.Module):
 
         return x, (dist_min, dist_max, dist_mean, threshold)
 
-    def forward_source_prune_(self, x, pos, source_stats, layer_idx):
-        for i, block in enumerate(self.blocks):
-            if i in layer_idx:
-                source_mean = source_stats[0][i][None, None, :]
-                source_std = source_stats[1][i][None, None, :]
-
-                x_ = x[:, 1:] + pos[:, 1:]  # No CLS Token
-                x_ = x_ - x_.mean(dim=(2), keepdim=True)
-                x_ = x_ / (x_.std(dim=(2), keepdim=True) + 1e-6)
-
-                x_distance = misc.mahalanobis_distance(x_, source_mean, source_std)
-                # z_score = (x_distance - x_distance.mean()) / x_distance.std()
-                threshold_max = misc.best_threshold_model(x_distance)
-                x_mask_max = x_distance <= max(threshold_max, x_distance.min() + 2)
-
-                x_mask = x_mask_max
-
-                masked_x = x[:, 1:][0][x_mask[0]].unsqueeze(0)
-
-                x = torch.cat([x[:, 0:1], masked_x], dim=1)
-                pos = torch.cat(
-                    [pos[:, 0:1], pos[:, 1:][0][x_mask[0]].unsqueeze(0)], dim=1
-                )
-
-            x = block(x + pos)
-        return x
-
     def forward_source_prune(self, x, pos, source_stats, layer_idx):
         for i, block in enumerate(self.blocks):
-            if i in layer_idx:
+            if i in [0]:  # layer_idx:
                 B, N, C = x.shape
                 source_mean = source_stats[0][i][None, None, :]
                 source_std = source_stats[1][i][None, None, :]
@@ -368,7 +341,7 @@ class TransformerEncoder(nn.Module):
                 # z_score = (x_distance - x_distance.mean()) / x_distance.std()
                 threshold_max = misc.best_threshold_model(x_distance)
                 x_mask_max = x_distance <= max(threshold_max, x_distance.min() + 2)
-                to_mask_count = (~x_mask_max).sum(dim=-1).float().mean().int()
+                to_mask_count = 10  # (~x_mask_max).sum(dim=-1).float().mean().int()
                 to_keep_indices = x_distance.argsort(dim=-1)[:, : N - 1 - to_mask_count]
                 to_keep_indices = to_keep_indices.sort(dim=-1)[0]
                 to_keep_indices = to_keep_indices.unsqueeze(-1).expand(-1, -1, C)
@@ -378,6 +351,7 @@ class TransformerEncoder(nn.Module):
 
                 x = torch.cat([x[:, 0:1], masked_x], dim=1)
                 pos = torch.cat([pos[:, 0:1], masked_pose], dim=1)
+                
 
             x = block(x + pos)
         return x
@@ -385,23 +359,39 @@ class TransformerEncoder(nn.Module):
     def forward_target_prune(self, x, pos):
         for i, block in enumerate(self.blocks):
             if i in [0]:
+                B, N, C = x.shape
                 cls_token = x[:, 0:1]
+                pos_cls = pos[:, 0:1]
 
-                x_ = x[:, 1:]  # No CLS Token
+                cls_query = (
+                    block.attn.qkv(block.norm1(cls_token + pos_cls))
+                    .reshape(B, 1, 3, C)
+                    .permute(2, 0, 1, 3)
+                )[0]
 
-                x_distance = misc.euclidean_distance(x_, cls_token)
-                # x_distance = (x_distance - x_distance.min()) / (x_distance.max() - x_distance.min())
-                x_mask = x_distance <= max(25.0, x_distance.mean())
-                # x_mask = x_distance <= 1.2
-                # remove the tokens from x based on the mask
-                masked_x = x[:, 1:][0][x_mask[0]].unsqueeze(0)
+                token = x[:, 1:]
+                pos_token = pos[:, 1:]
+
+                token_key = (
+                    block.attn.qkv(block.norm1(token + pos_token))
+                    .reshape(B, N - 1, 3, C)
+                    .permute(2, 0, 1, 3)
+                )[1]
+
+                cosine_similarity = F.cosine_similarity(cls_query, token_key, dim=-1)
+
+                to_mask_count = 20  # (~x_mask_max).sum(dim=-1).float().mean().int()
+                to_keep_indices = cosine_similarity.argsort(dim=-1, descending=True)[
+                    :, : N - 1 - to_mask_count
+                ]
+                to_keep_indices = to_keep_indices.sort(dim=-1)[0]
+                to_keep_indices = to_keep_indices.unsqueeze(-1).expand(-1, -1, C)
+
+                masked_x = torch.gather(x[:, 1:], 1, to_keep_indices)
+                masked_pose = torch.gather(pos[:, 1:], 1, to_keep_indices)
 
                 x = torch.cat([x[:, 0:1], masked_x], dim=1)
-                pos = torch.cat(
-                    [pos[:, 0:1], pos[:, 1:][0][x_mask[0]].unsqueeze(0)], dim=1
-                )
-
-                # x = x * x_mask
+                pos = torch.cat([pos[:, 0:1], masked_pose], dim=1)
 
             x = block(x + pos)
 
