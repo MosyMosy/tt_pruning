@@ -9,8 +9,8 @@ def get_args():
     parser.add_argument("--alpha", type=float, default=0.0)
     parser.add_argument("--batch_size_tta", type=int, default=1)
     parser.add_argument("--stride_step", type=int, default=1)
-    parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--grad_steps", type=int, default=1)
+    parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--grad_steps", type=int, default=0)
     parser.add_argument(
         "--disable_bn_adaptation",
         action="store_true",
@@ -24,7 +24,7 @@ def get_args():
     parser.add_argument(
         "--ckpts",
         type=str,
-        default="checkpoints/modelnet_src_only.pth",
+        default="checkpoints/ckpt-best.pth",
         help="test used ckpt path",
     )  # default="checkpoints/modelnet_src_only.pth", help='test used ckpt path'
     parser.add_argument(

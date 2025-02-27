@@ -279,9 +279,9 @@ def generate_intermediate_embeddings(args, config, source_model):
 
 
 @torch.jit.script
-def softmax_entropy(x: torch.Tensor) -> torch.Tensor:
+def softmax_entropy(x: torch.Tensor, dim:int=-1) -> torch.Tensor:
     """Entropy of softmax distribution from logits."""
-    return -(x.softmax(1) * x.log_softmax(1)).sum(1)
+    return -(x.softmax(dim) * x.log_softmax(dim)).sum(dim)
 
 
 def setup_tent_optimizer(model, args):
@@ -323,12 +323,12 @@ def setup_prune_optimizer(model, args):
     for m in model.modules():
         if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
             # m.requires_grad_(True)
-            m.track_running_stats = False  # for original implementation this is False
+            # m.track_running_stats = False  # for original implementation this is False
             m.running_mean = None  # for original implementation uncomment this
             m.running_var = None  # for original implementation uncomment this
-    for m in model.modules():
-        if isinstance(m, torch.nn.LayerNorm):
-            m.requires_grad_(True)
+    # for m in model.modules():
+    #     if isinstance(m, torch.nn.LayerNorm):
+    #         m.requires_grad_(True)
     model.module.class_head.requires_grad_(True)
 
     params = []
@@ -391,6 +391,7 @@ def eval_source_prune(
             test_label = []
 
             if args.method in [
+                "source_only",
                 "source_prune",
                 "target_prune",
                 "source_prune_adapt",
@@ -479,6 +480,46 @@ def eval_source_prune(
                             f"GradStep - {grad_step} / {args.grad_steps},",
                             logger=logger,
                         )
+                # elif False: # args.method in ["source_only", "target_prune"]:
+                #     if (not args.online) and idx != 0:
+                #         base_model = load_base_model(
+                #             args, config, logger, pretrained=False
+                #         )
+                #         base_model.load_state_dict(source_model.state_dict())
+                #         base_model, optimizer = setup_optimizer(base_model, args)
+
+                #     elif (
+                #         args.online and idx == 0
+                #     ):  # for the first sample in online mode
+                #         base_model, optimizer = setup_optimizer(base_model, args)
+                #         args.grad_steps = 1
+
+                #     # base_model.zero_grad()
+                #     base_model.train()
+                #     if args.disable_bn_adaptation:  # disable statistical alignment
+                #         for m in base_model.modules():
+                #             if (
+                #                 isinstance(m, nn.BatchNorm2d)
+                #                 or isinstance(m, nn.BatchNorm1d)
+                #                 or isinstance(m, nn.BatchNorm3d)
+                #             ):
+                #                 m.eval()
+
+                #     for grad_step in range(args.grad_steps):
+                #         points = data.cuda()
+                #         # make a batch
+                #         points = [
+                #             misc.fps(points, config.npoints, random_start_point=True)
+                #             for _ in range(args.batch_size_tta)
+                #         ]
+                #         points = torch.cat(points, dim=0)
+
+                #         if idx % args.stride_step == 0 or idx == len(tta_loader) - 1:
+                #             with torch.no_grad():
+                #                 base_model(points)
+                #         else:
+                #             continue
+
 
                 # now inferring on this one sample
                 base_model.eval()
@@ -490,24 +531,41 @@ def eval_source_prune(
                     for _ in range(args.batch_size_tta)
                 ]
                 points = torch.cat(points, dim=0)
-                
-                labels = [
-                    labels
-                    for _ in range(args.batch_size_tta)
-                ]
+
+                labels = [labels for _ in range(args.batch_size_tta)]
                 labels = torch.cat(labels, dim=0)
 
                 with torch.no_grad():
                     if args.method in ["source_only", "tent"]:
                         logits = base_model(points)
-                    elif args.method in ["source_prune", "source_prune_adapt"]:
-                        logits = base_model.module.forward_source_prune(
-                            points,
-                            source_stats=(
-                                clean_intermediates_mean,
-                                clean_intermediates_std,
-                            ),
-                        )
+                    # elif args.method in ["source_prune", "source_prune_adapt"]:
+                    #     logits = base_model.module.forward_source_prune(
+                    #         points,
+                    #         source_stats=(
+                    #             clean_intermediates_mean,
+                    #             clean_intermediates_std,
+                    #         ),
+                    #         layer_idx=[0],
+                    #         prune_size=3,
+                    #     )
+                    elif args.method in ["source_prune"]:
+                        prune_sizes = [0, 2, 4, 8, 16]
+                        logits = []
+                        for i in range(len(prune_sizes)):
+                            logits.append(
+                                base_model.module.forward_source_prune(
+                                    points,
+                                    source_stats=(
+                                        clean_intermediates_mean,
+                                        clean_intermediates_std,
+                                    ),
+                                    layer_idx=[0],
+                                    prune_size=prune_sizes[i],
+                                ).unsqueeze(1)
+                            )
+                        logits = torch.cat(logits, dim=1)
+                        entropy = softmax_entropy(logits, dim=-1)
+                        logits = logits[torch.arange(logits.shape[0]), entropy.argmin(dim=-1)]
                     elif args.method in ["target_prune", "target_prune_adapt"]:
                         logits = base_model.module.forward_target_prune(points)
 

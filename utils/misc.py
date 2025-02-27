@@ -410,6 +410,47 @@ def zscore_distance(tokens, mean, std):
     z_score = (tokens - mean) / std  # Shape: (B, N, C)
 
     # Compute Euclidean (L2) norm across the feature dimension (C)
+    zscore_dist = torch.sqrt((z_score**2).sum(dim=-1))  # Shape: (B, N)
+
+    return zscore_dist
+
+def cosine_distance(tokens, mean):
+    """
+    Compute cosine distance between tokens and pre-training mean.
+
+    Args:
+        tokens (torch.Tensor): Test-time token embeddings, shape (B, N, C)
+        mean (torch.Tensor): Pre-training mean, shape (1, 1, C)
+
+    Returns:
+        torch.Tensor: Cosine distance for each token, shape (B, N)
+    """
+    # Compute cosine similarity
+    tokens_norm = F.normalize(tokens, p=2, dim=-1)  # Shape: (B, N, C)
+    mean_norm = F.normalize(mean, p=2, dim=-1)  # Shape: (1, 1, C)
+    cosine_sim = (tokens_norm * mean_norm).sum(dim=-1)  # Shape: (B, N)
+
+    # Compute cosine distance
+    cosine_dist = 1 - cosine_sim  # Shape: (B, N)
+
+    return cosine_dist
+
+def zscore_distance_2(tokens, mean, std):
+    """
+    Compute Z-score distance between tokens and pre-training statistics.
+
+    Args:
+        tokens (torch.Tensor): Test-time token embeddings, shape (B, N, C)
+        mean (torch.Tensor): Pre-training mean, shape (1, 1, C)
+        std (torch.Tensor): Pre-training std deviation, shape (1, 1, C)
+
+    Returns:
+        torch.Tensor: Z-score distance for each token, shape (B, N)
+    """
+    # Compute Z-score
+    z_score = (tokens - mean)  # Shape: (B, N, C)
+
+    # Compute Euclidean (L2) norm across the feature dimension (C)
     zscore_dist = z_score.sum(dim=-1)  # Shape: (B, N)
 
     return zscore_dist
@@ -470,7 +511,9 @@ def best_threshold_model(distances):
     max_val = distances.max().item()
     mean_val = distances.mean().item()
     return (
-        25
-        if ((max_val - min_val) > 6.6)
+        31
+        if ((max_val - min_val) > 3.6)
         else max_val * 2
     )
+
+

@@ -326,22 +326,25 @@ class TransformerEncoder(nn.Module):
 
         return x, (dist_min, dist_max, dist_mean, threshold)
 
-    def forward_source_prune(self, x, pos, source_stats, layer_idx):
+    def forward_source_prune(self, x, pos, source_stats, layer_idx, prune_size=16):
         for i, block in enumerate(self.blocks):
-            if i in [0]:  # layer_idx:
+            if i in layer_idx:
                 B, N, C = x.shape
-                source_mean = source_stats[0][i][None, None, :]
-                source_std = source_stats[1][i][None, None, :]
+                source_mean = source_stats[0][i][None, None, :].to(x.dtype)
+                source_std = source_stats[1][i][None, None, :].to(x.dtype)
 
                 x_ = x[:, 1:] + pos[:, 1:]  # No CLS Token
                 x_ = x_ - x_.mean(dim=(2), keepdim=True)
                 x_ = x_ / (x_.std(dim=(2), keepdim=True) + 1e-6)
 
+                # sub_vector = misc.compute_coral_subspace(source_mean, source_std, 200)
+                # x_distance = misc.mahalanobis_distance_subspace(x_, source_mean, source_std, sub_vector)
+
                 x_distance = misc.mahalanobis_distance(x_, source_mean, source_std)
                 # z_score = (x_distance - x_distance.mean()) / x_distance.std()
                 threshold_max = misc.best_threshold_model(x_distance)
                 x_mask_max = x_distance <= max(threshold_max, x_distance.min() + 2)
-                to_mask_count = 10  # (~x_mask_max).sum(dim=-1).float().mean().int()
+                to_mask_count = prune_size  # (~x_mask_max).sum(dim=-1).float().mean().int()
                 to_keep_indices = x_distance.argsort(dim=-1)[:, : N - 1 - to_mask_count]
                 to_keep_indices = to_keep_indices.sort(dim=-1)[0]
                 to_keep_indices = to_keep_indices.unsqueeze(-1).expand(-1, -1, C)
@@ -351,7 +354,6 @@ class TransformerEncoder(nn.Module):
 
                 x = torch.cat([x[:, 0:1], masked_x], dim=1)
                 pos = torch.cat([pos[:, 0:1], masked_pose], dim=1)
-                
 
             x = block(x + pos)
         return x
@@ -567,7 +569,7 @@ class PointTransformer(nn.Module):
 
         return ret, (dist_min, dist_max, dist_mean, threshold)
 
-    def forward_source_prune(self, pts, source_stats, layer_idx=None):
+    def forward_source_prune(self, pts, source_stats, layer_idx=None, prune_size=16):
         if layer_idx is None:
             layer_idx = range(self.depth)
         neighborhood, center = self.group_divider(pts)
@@ -580,7 +582,9 @@ class PointTransformer(nn.Module):
         x = torch.cat((cls_tokens, group_input_tokens), dim=1)
         pos = torch.cat((cls_pos, pos), dim=1)
         # transformer
-        x = self.blocks.forward_source_prune(x, pos, source_stats, layer_idx)
+        x = self.blocks.forward_source_prune(
+            x, pos, source_stats, layer_idx, prune_size=prune_size
+        )
         x = self.norm(x)
         concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
         ret = self.class_head(concat_f)
