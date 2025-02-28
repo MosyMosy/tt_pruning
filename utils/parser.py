@@ -9,7 +9,7 @@ def get_args():
     parser.add_argument("--alpha", type=float, default=0.0)
     parser.add_argument("--batch_size_tta", type=int, default=1)
     parser.add_argument("--stride_step", type=int, default=1)
-    parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--grad_steps", type=int, default=0)
     parser.add_argument(
         "--disable_bn_adaptation",
@@ -181,13 +181,10 @@ def get_args():
         type=str,
         choices=[
             "source_only",
-            "source_prune",
-            "source_prune_adapt",
-            "target_prune",
-            "target_prune_adapt",
-            "tent",
+            "prototype_prune",
+            "cls_prune",
         ],
-        default="source_prune",
+        default="prototype_prune",
     )
 
     parser.add_argument("--tent_LR", type=float, default=1e-5)

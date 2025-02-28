@@ -2,7 +2,7 @@ from tools import pretrain_run_net as pretrain
 from tools import finetune_run_net as finetune
 from tools import ttt_rotnet as tttrotnet
 from tools import test_run_net as test_net
-from tools.tta_prune import eval_source
+from tools.tta_prune import runner
 from tools import eval_source_rotnet as eval_source_rotnet
 from utils import parser, dist_utils, misc
 from utils.logger import *
@@ -86,7 +86,7 @@ def main(args):
 
     # if args.test_source:
     args.split = 'test'
-    eval_source(args, config)
+    runner(args, config)
 
     # elif args.test_source_rotnet:
     #     args.split = 'test'

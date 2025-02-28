@@ -326,7 +326,7 @@ class TransformerEncoder(nn.Module):
 
         return x, (dist_min, dist_max, dist_mean, threshold)
 
-    def forward_source_prune(self, x, pos, source_stats, layer_idx, prune_size=16):
+    def forward_prototype_prune(self, x, pos, source_stats, layer_idx, prune_size=16):
         for i, block in enumerate(self.blocks):
             if i in layer_idx:
                 B, N, C = x.shape
@@ -358,7 +358,7 @@ class TransformerEncoder(nn.Module):
             x = block(x + pos)
         return x
 
-    def forward_target_prune(self, x, pos):
+    def forward_cls_prune(self, x, pos,  prune_size=16):
         for i, block in enumerate(self.blocks):
             if i in [0]:
                 B, N, C = x.shape
@@ -380,11 +380,10 @@ class TransformerEncoder(nn.Module):
                     .permute(2, 0, 1, 3)
                 )[1]
 
-                cosine_similarity = F.cosine_similarity(cls_query, token_key, dim=-1)
+                cosine_distance = misc.cosine_distance(cls_query, token_key)
 
-                to_mask_count = 20  # (~x_mask_max).sum(dim=-1).float().mean().int()
-                to_keep_indices = cosine_similarity.argsort(dim=-1, descending=True)[
-                    :, : N - 1 - to_mask_count
+                to_keep_indices = cosine_distance.argsort(dim=-1)[
+                    :, : N - 1 - prune_size
                 ]
                 to_keep_indices = to_keep_indices.sort(dim=-1)[0]
                 to_keep_indices = to_keep_indices.unsqueeze(-1).expand(-1, -1, C)
@@ -472,6 +471,18 @@ class PointTransformer(nn.Module):
             base_ckpt = {
                 k.replace("module.", ""): v for k, v in ckpt["base_model"].items()
             }
+            
+            # delete the cls head in case it had a different number of classes
+            to_delete_prefix = "class_head.8"
+            # Check if the key exists and its shape meets the condition
+            if f"{to_delete_prefix}.weight" in base_ckpt:
+                shape = base_ckpt[f"{to_delete_prefix}.weight"].shape  # Get the shape
+                # Replace `x` with the shape condition you want to check
+                if shape[0] != self.cls_dim:  
+                    # Delete all keys that start with "class_head.8"
+                    keys_to_delete = [k for k in list(base_ckpt.keys()) if k.startswith(to_delete_prefix)]
+                    for k in keys_to_delete:
+                        del base_ckpt[k]
 
             for k in list(base_ckpt.keys()):
                 if k.startswith("MAE_encoder"):
@@ -569,7 +580,7 @@ class PointTransformer(nn.Module):
 
         return ret, (dist_min, dist_max, dist_mean, threshold)
 
-    def forward_source_prune(self, pts, source_stats, layer_idx=None, prune_size=16):
+    def forward_prototype_prune(self, pts, source_stats, layer_idx=None, prune_size=16):
         if layer_idx is None:
             layer_idx = range(self.depth)
         neighborhood, center = self.group_divider(pts)
@@ -582,7 +593,7 @@ class PointTransformer(nn.Module):
         x = torch.cat((cls_tokens, group_input_tokens), dim=1)
         pos = torch.cat((cls_pos, pos), dim=1)
         # transformer
-        x = self.blocks.forward_source_prune(
+        x = self.blocks.forward_prototype_prune(
             x, pos, source_stats, layer_idx, prune_size=prune_size
         )
         x = self.norm(x)
@@ -591,7 +602,7 @@ class PointTransformer(nn.Module):
 
         return ret
 
-    def forward_target_prune(self, pts):
+    def forward_cls_prune(self, pts, prune_size=16):
         neighborhood, center = self.group_divider(pts)
         group_input_tokens = self.encoder(neighborhood)  # B G N
         cls_tokens = self.cls_token.expand(group_input_tokens.size(0), -1, -1)
@@ -602,7 +613,7 @@ class PointTransformer(nn.Module):
         x = torch.cat((cls_tokens, group_input_tokens), dim=1)
         pos = torch.cat((cls_pos, pos), dim=1)
         # transformer
-        x = self.blocks.forward_target_prune(x, pos)
+        x = self.blocks.forward_cls_prune(x, pos, prune_size=prune_size)
         x = self.norm(x)
         concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
         ret = self.class_head(concat_f)

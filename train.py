@@ -12,8 +12,7 @@ from tensorboardX import SummaryWriter
 
 def main(args):
     # only supporting these three datasts atm
-    if args.dataset_name not in ['modelnet', 'scanobject', 'scanobject_nbg', 'partnet', 'shapenetcore', 'shapenet']:
-        raise NotImplementedError
+    
 
     args.use_gpu = torch.cuda.is_available()
     if args.use_gpu:
@@ -41,6 +40,10 @@ def main(args):
             val_writer = None
     # config
     config = get_config(args, logger=logger)
+    if config.dataset.name.lower() not in ['modelnet', 'scanobject', 'scanobject_nbg', 'partnet', 'shapenetcore', 'shapenet']:
+        raise NotImplementedError
+    
+    
     # batch size
     if args.distributed:
         assert config.total_bs % world_size == 0
@@ -78,7 +81,7 @@ def main(args):
         config.dataset.val.others.way = args.way
         config.dataset.val.others.fold = args.fold
 
-    if args.dataset_name == 'scanobject' or args.dataset_name == 'scanobject_nbg':
+    if config.dataset.name == 'scanobject' or config.dataset.name == 'scanobject_nbg':
         assert args.ckpts is not None  # because for scan object we only finetune from pretrained weights
 
     if args.train_tttrot:  # to train a model for rotation prediction
@@ -87,7 +90,7 @@ def main(args):
     if args.jt or args.only_cls:
         pretrain(args, config, train_writer, val_writer)
 
-    if args.finetune_model or args.scratch:
+    if args.finetune_model or args.scratch_model:
         finetune(args, config, train_writer, val_writer)
 
 

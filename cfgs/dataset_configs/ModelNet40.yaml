@@ -1,5 +1,5 @@
 NAME: ModelNet
-DATA_PATH: /home/moslem/projects/dataset/tta/clean/modelnet
+DATA_PATH:  /export/datasets/public/Point_Cloud_Processing/TTA/clean/modelnet40_normal_resampled #/home/moslem/projects/dataset/tta/clean/modelnet
 N_POINTS: 8192
 NUM_CATEGORY: 40
 USE_NORMALS: FALSE
