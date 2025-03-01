@@ -195,10 +195,10 @@ def get_args():
     
     parser.add_argument("--bftt3d_stages", type=int, default=3)
     parser.add_argument("--bftt3d_dim", type=int, default=72)
-    parser.add_argument("--bftt3d_k", type=int, default=10)
-    parser.add_argument("--bftt3d_alpha", type=int, default=10)
-    parser.add_argument("--bftt3d_beta", type=int, default=10)
-    parser.add_argument("--bftt3d_gamma", type=int, default=10)
+    parser.add_argument("--bftt3d_k", type=int, default=120)
+    parser.add_argument("--bftt3d_alpha", type=int, default=1000)
+    parser.add_argument("--bftt3d_beta", type=int, default=100)
+    parser.add_argument("--bftt3d_gamma", type=int, default=205)
 
     args = parser.parse_args()
 
