@@ -472,6 +472,11 @@ class PointTransformer(nn.Module):
                 k.replace("module.", ""): v for k, v in ckpt["base_model"].items()
             }
             
+            base_ckpt = {
+                k.replace("class_head.8.custom_last_layer_name", "class_head.8"): v
+                for k, v in base_ckpt.items()
+            }
+            
             # delete the cls head in case it had a different number of classes
             to_delete_prefix = "class_head.8"
             # Check if the key exists and its shape meets the condition

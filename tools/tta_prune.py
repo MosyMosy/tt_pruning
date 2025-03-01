@@ -97,27 +97,27 @@ def runner(args, config):
     source_model = load_base_model(args, config, logger)
     source_model.eval()
 
-    if args.method in ["prototype_prune", "prototype_prune_adapt", "prototype_prune_analyze"]:
-        clean_intermediates_path = (
-            f"intermediate_features/{dataset_name}_clean_intermediates.pth"
+    if args.method in ["prototype_prune"]:
+        # clean_intermediates_path = (
+        #     f"intermediate_features/{dataset_name}_clean_intermediates.pth"
+        # )
+        # if os.path.exists(clean_intermediates_path):
+        #     clean_intermediates = torch.load(clean_intermediates_path)
+        #     clean_intermediates_mean, clean_intermediates_std = (
+        #         clean_intermediates["mean"],
+        #         clean_intermediates["std"],
+        #     )
+        # else:
+        clean_intermediates_mean, clean_intermediates_std = (
+            generate_intermediate_embeddings(args, config, source_model)
         )
-        if os.path.exists(clean_intermediates_path):
-            clean_intermediates = torch.load(clean_intermediates_path)
-            clean_intermediates_mean, clean_intermediates_std = (
-                clean_intermediates["mean"],
-                clean_intermediates["std"],
-            )
-        else:
-            clean_intermediates_mean, clean_intermediates_std = (
-                generate_intermediate_embeddings(args, config, source_model)
-            )
-            torch.save(
-                {
-                    "mean": clean_intermediates_mean.cpu(),
-                    "std": clean_intermediates_std.cpu(),
-                },
-                clean_intermediates_path,
-            )
+            # torch.save(
+            #     {
+            #         "mean": clean_intermediates_mean.cpu(),
+            #         "std": clean_intermediates_std.cpu(),
+            #     },
+            #     clean_intermediates_path,
+            # )
         clean_intermediates_mean = clean_intermediates_mean.cuda()
         clean_intermediates_std = clean_intermediates_std.cuda()
 

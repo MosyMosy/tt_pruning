@@ -165,7 +165,7 @@ def runner(args, config):
 
     # Label Memory
     label_memory_ys = torch.cat(label_memory, dim=0)
-    label_memory = F.one_hot(label_memory_ys).squeeze().float()
+    label_memory = F.one_hot(label_memory_ys.long()).squeeze().float()
 
     # Feature Memory
     feature_memory = torch.cat(feature_memory, dim=0)
@@ -251,10 +251,10 @@ def runner(args, config):
         logits_domain_list = torch.cat(logits_domain_list)
         domain_acc = cls_acc(logits_domain_list, label_domain_list)
         source_acc = cls_acc(logits_source_list, label_domain_list)
-        error_list_mixed.append(100 - domain_acc)
-        error_list_source.append(100 - source_acc)
-        print_log(f"Source's {corr_id} classification error: {100 - source_acc:.2f}.")
-        print_log(f"BFTT3D's {corr_id} classification error: {100 - domain_acc:.2f}.")
+        error_list_mixed.append(domain_acc)
+        error_list_source.append(source_acc)
+        print_log(f"Source's {corr_id} classification error: {source_acc:.2f}.")
+        print_log(f"BFTT3D's {corr_id} classification error: {domain_acc:.2f}.")
         print_log("<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
         
         f_write.write(" ".join([str(round(float(xx), 3)) for xx in [domain_acc]]) + "\n")
