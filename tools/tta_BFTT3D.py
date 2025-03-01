@@ -104,19 +104,19 @@ def load_base_model(args, config, logger, load_part_seg=False, pretrained=True):
 
 
     
-def get_arguments():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--load_bz', type=int, default=24)
-    parser.add_argument('--points', type=int, default=1024)
-    parser.add_argument('--stages', type=int, default=3)
-    parser.add_argument('--dim', type=int, default=72)
-    parser.add_argument('--k', type=int, default=120)
-    parser.add_argument('--alpha', type=int, default=1000)
-    parser.add_argument('--beta', type=int, default=100)
-    parser.add_argument('--gamma', type=int, default=205)
-    parser.add_argument('--pth', type=str, default="pointnet")
-    args = parser.parse_args()
-    return args
+# def get_arguments():
+#     parser = argparse.ArgumentParser()
+#     parser.add_argument('--load_bz', type=int, default=24)
+#     parser.add_argument('--points', type=int, default=1024)
+#     parser.add_argument('--stages', type=int, default=3)
+#     parser.add_argument('--dim', type=int, default=72)
+#     parser.add_argument('--k', type=int, default=120)
+#     parser.add_argument('--alpha', type=int, default=1000)
+#     parser.add_argument('--beta', type=int, default=100)
+#     parser.add_argument('--gamma', type=int, default=205)
+#     parser.add_argument('--pth', type=str, default="pointnet")
+#     args = parser.parse_args()
+#     return args
         
 @torch.no_grad()
 def runner(args, config):
