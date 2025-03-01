@@ -154,7 +154,6 @@ def runner(args, config):
     ):
         # points = points.cuda().permute(0, 2, 1)
         points = data[0].cuda()
-        points = misc.fps(points, config.npoints)
         labels = data[1].cuda()
         
         # Pass through the Non-Parametric Encoder
