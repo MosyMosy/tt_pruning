@@ -24,13 +24,13 @@ def get_args():
     parser.add_argument(
         "--ckpts",
         type=str,
-        default="checkpoints/ckpt-best.pth",
+        default="checkpoints/scanobject_from_MATE-shapenet.pth",
         help="test used ckpt path",
     )  # default="checkpoints/modelnet_src_only.pth", help='test used ckpt path'
     parser.add_argument(
         "--config",
         type=str,
-        default="cfgs/tta_prune/tta_prune_modelnet.yaml",
+        default="cfgs/tta_prune/tta_prune_scanobject.yaml",
         help="yaml config file",
     )
     parser.add_argument(
@@ -183,14 +183,22 @@ def get_args():
             "source_only",
             "prototype_prune",
             "cls_prune",
+            "bftt3d"
         ],
-        default="prototype_prune",
+        default="bftt3d",
     )
 
     parser.add_argument("--tent_LR", type=float, default=1e-5)
     # parser.add_argument('--LR', type=float, default= 0.005)
-    parser.add_argument("--tent_BETA", type=int, default=0.9)
+    parser.add_argument("--tent_BETA", type=float, default=0.9)
     parser.add_argument("--tent_WD", type=int, default=0.5)
+    
+    parser.add_argument("--bftt3d_stages", type=int, default=3)
+    parser.add_argument("--bftt3d_dim", type=int, default=72)
+    parser.add_argument("--bftt3d_k", type=int, default=10)
+    parser.add_argument("--bftt3d_alpha", type=int, default=10)
+    parser.add_argument("--bftt3d_beta", type=int, default=10)
+    parser.add_argument("--bftt3d_gamma", type=int, default=10)
 
     args = parser.parse_args()
 

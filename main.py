@@ -2,6 +2,7 @@ from utils import parser, dist_utils, misc
 from utils.logger import *
 from utils.config import *
 from tools.tta_prune import runner
+from tools.tta_BFTT3D import runner as runner_BFTT3D
 import time
 import os
 import torch
@@ -83,10 +84,10 @@ def main(args):
     config.model.group_norm = args.group_norm
 
     args.split = 'test'
-    # if args.method == "source_only":
-    #     eval_source(args, config)
-    # elif args.method == 'prototype_prune':
-    runner(args, config)
+    if args.method == "bftt3d":
+        runner_BFTT3D(args, config)
+    else:
+        runner(args, config)
     # else:
     #     raise NotImplementedError
 

@@ -3,14 +3,9 @@ import time
 from tools import builder
 from utils import misc, dist_utils
 from utils.logger import *
-from utils.AverageMeter import AverageMeter
 import datasets.tta_datasets as tta_datasets
 from torch.utils.data import DataLoader
-from utils.rotnet_utils import rotate_batch
-import utils.tent_shot as tent_shot_utils
-import utils.t3a as t3a_utils
 from utils.misc import *
-import torch.optim as optim
 
 
 level = [5]
@@ -233,19 +228,16 @@ def eval_prune(
             tta_loader = load_tta_dataset(args, config)
             test_pred = []
             test_label = []
-
-
+            
             base_model = load_base_model(args, config, logger, pretrained=False)
             base_model.load_state_dict(source_model.state_dict())
+            
             for idx, (data, labels) in enumerate(tta_loader):
                 # now inferring on this one sample
                 
                 # reset batchnorm running stats
                 base_model.eval()
-                for m in base_model.modules():
-                    if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
-                        m.running_mean = None  # for original implementation of tent
-                        m.running_var = None  # for original implementation of tent
+                
                 
                 points = data.cuda()
                 labels = labels.cuda()
@@ -264,6 +256,11 @@ def eval_prune(
                         logits = base_model(points)
 
                 elif args.method in ["prototype_prune", "cls_prune"]:
+                    # reset batchnorm running stats
+                    for m in base_model.modules():
+                        if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
+                            m.running_mean = None  # for original implementation of tent
+                            m.running_var = None  # for original implementation of tent
                     prune_sizes = [0, 2, 4, 8, 16]
                     logits = []
                     for i in range(len(prune_sizes)):
