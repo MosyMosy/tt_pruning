@@ -1,3 +1,5 @@
+import os
+import time
 from tools import builder
 from utils import misc, dist_utils
 from utils.logger import *
@@ -15,52 +17,55 @@ def load_tta_dataset(args, config):
     # we have 3 choices - every tta_loader returns only point and labels
     root = config.tta_dataset_path  # being lazy - 1
 
-    if args.dataset_name == 'modelnet':
-        root = os.path.join(root, f'{args.dataset_name}_c')
-
-        if args.corruption == 'clean':
+    if config.dataset.name == "modelnet":
+        if args.corruption == "clean":
             inference_dataset = tta_datasets.ModelNet_h5(args, root)
-            tta_loader = DataLoader(dataset=inference_dataset, batch_size=args.batch_size, shuffle=args.shuffle, drop_last=True)
+            tta_loader = DataLoader(
+                dataset=inference_dataset,
+                batch_size=args.batch_size,
+                shuffle=args.shuffle,
+                drop_last=False,
+            )
         else:
             inference_dataset = tta_datasets.ModelNet40C(args, root)
-            tta_loader = DataLoader(dataset=inference_dataset, batch_size=args.batch_size, shuffle=args.shuffle, drop_last=True)
+            tta_loader = DataLoader(
+                dataset=inference_dataset,
+                batch_size=args.batch_size,
+                shuffle=args.shuffle,
+                drop_last=False,
+            )
 
-    elif args.dataset_name == 'partnet':
-        if args.corruption != 'clean':
-            root = os.path.join(root, f'{args.dataset_name}_c',
-                                f'{args.corruption}_{args.severity}')
-        else:
-            root = os.path.join(root, f'{args.dataset_name}_c',
-                                f'{args.corruption}')
-
-        inference_dataset = tta_datasets.PartNormalDataset(root=root, npoints=config.npoints, split='test',
-                                                           normal_channel=config.normal, debug=args.debug)
-        tta_loader = DataLoader(inference_dataset, batch_size=args.batch_size, shuffle=args.shuffle, drop_last=True)
-    elif args.dataset_name == 'scanobject':
-
-        root = os.path.join(root, f'{args.dataset_name}_c')
-
+    elif config.dataset.name == "scanobject":
         inference_dataset = tta_datasets.ScanObjectNN(args=args, root=root)
-        tta_loader = DataLoader(inference_dataset, batch_size=args.batch_size, shuffle=args.shuffle, drop_last=True)
+        tta_loader = DataLoader(
+            inference_dataset,
+            batch_size=args.batch_size,
+            shuffle=args.shuffle,
+            drop_last=False,
+        )
 
-    elif args.dataset_name == 'shapenetcore':
-
-        root = os.path.join(root, f'{args.dataset_name}_c')
-
+    elif config.dataset.name == "shapenetcore":
         inference_dataset = tta_datasets.ShapeNetCore(args=args, root=root)
-        tta_loader = DataLoader(inference_dataset, batch_size=args.batch_size, shuffle=args.shuffle, drop_last=True)
+        tta_loader = DataLoader(
+            inference_dataset,
+            batch_size=args.batch_size,
+            shuffle=args.shuffle,
+            drop_last=False,
+        )
 
     else:
-        raise NotImplementedError(f'TTA for {args.tta} is not implemented')
+        raise NotImplementedError(f"TTA for {args.tta} is not implemented")
 
-    print(f'\n\n Loading data from ::: {root} ::: level ::: {args.severity}\n\n')
+    print(f"\n\n Loading data from ::: {root} ::: level ::: {args.severity}\n\n")
 
     return tta_loader
 
 
+
+
 def load_base_model(args, config, logger, load_part_seg=False):
     base_model = builder.model_builder(config.model)
-    base_model.load_model_from_ckpt(args.ckpts, load_part_seg)
+    base_model.load_model_from_ckpt(args.ckpts)
     if args.use_gpu:
         base_model.to(args.local_rank)
     if args.distributed:
@@ -77,11 +82,17 @@ def load_base_model(args, config, logger, load_part_seg=False):
 
 
 def eval_source(args, config):
-    config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
+    dataset_name = config.dataset.name
+    resutl_file_path = os.path.join(
+        "results_final_tta/",
+        args.method,
+        f"{dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
+    )
+    # config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
     config.model.group_norm = args.group_norm
     npoints = config.npoints
     logger = get_logger(args.log_name)
-    dataset_name = args.dataset_name
+    
 
     if dataset_name == 'modelnet':
         config.model.cls_dim = 40
@@ -100,8 +111,8 @@ def eval_source(args, config):
         for corr_id, args.corruption in enumerate(corruptions):
 
             if corr_id == 0:
-                f_write, logtime = get_writer_to_all_result(args, config,
-                                                            custom_path='source_only_results/')  # for saving results for easy copying to google sheet
+                f_write = get_writer_to_all_result(args, config,
+                                                            custom_path=resutl_file_path)  # for saving results for easy copying to google sheet
                 f_write.write(f'All Corruptions: {corruptions}' + '\n\n')
                 f_write.write(f'Source Only Results for Dataset: {dataset_name}' + '\n\n')
                 f_write.write(f'Check Point: {args.ckpts}' + '\n\n')
@@ -156,15 +167,21 @@ def eval_source(args, config):
                 f_write.flush()
                 if corr_id == len(corruptions) - 1:
                     f_write.close()
-                    print(f'Final Results Saved at:', os.path.join('source_only_results/', f'{logtime}_results.txt'))
+                    print(f'Final Results Saved at:', resutl_file_path)
 
 
 def eval_source_rotnet(args, config):
-    config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
+    dataset_name = config.dataset.name
+    resutl_file_path = os.path.join(
+        "results_final_tta/",
+        args.method,
+        f"{dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
+    )
+    # config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
     config.model.group_norm = args.group_norm
     npoints = config.npoints
     logger = get_logger(args.log_name)
-    dataset_name = args.dataset_name
+    
 
     if dataset_name == 'modelnet':
         config.model.cls_dim = 40
@@ -177,8 +194,8 @@ def eval_source_rotnet(args, config):
         for corr_id, args.corruption in enumerate(corruptions):
 
             if corr_id == 0:
-                f_write, logtime = get_writer_to_all_result(args, config,
-                                                            custom_path='source_only_results_rotnet/')  # for saving results for easy copying to google sheet
+                f_write = get_writer_to_all_result(args, config,
+                                                            custom_path=resutl_file_path)  # for saving results for easy copying to google sheet
                 f_write.write(f'All Corruptions: {corruptions}' + '\n\n')
                 f_write.write(f'Source Only Results for Dataset: {dataset_name}' + '\n\n')
                 f_write.write(f'Check Point: {args.ckpts}' + '\n\n')
@@ -229,12 +246,16 @@ def eval_source_rotnet(args, config):
                 f_write.flush()
                 if corr_id == len(corruptions) - 1:
                     f_write.close()
-                    print(f'Final Results Saved at:',
-                          os.path.join('source_only_results_rotnet/', f'{logtime}_results.txt'))
+                    print(f'Final Results Saved at:',resutl_file_path)
 
 
-def tta_rotnet(args, config, train_writer=None):
-    dataset_name = args.dataset_name
+def tta_rotnet(args, config, train_writer=None):    
+    dataset_name = config.dataset.name
+    resutl_file_path = os.path.join(
+        "results_final_tta/",
+        args.method,
+        f"{dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
+    )
 
     assert dataset_name is not None
     assert args.mask_ratio == 0.9
@@ -253,7 +274,7 @@ def tta_rotnet(args, config, train_writer=None):
     args.batch_size = 1
     args.disable_bn_adaptation = True
 
-    config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
+    # config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
     config.model.group_norm = args.group_norm
     npoints = config.npoints
     logger = get_logger(args.log_name)
@@ -265,7 +286,7 @@ def tta_rotnet(args, config, train_writer=None):
 
             if corr_id == 0:  # for saving results for easy copying to google sheet
 
-                f_write, logtime = get_writer_to_all_result(args, config, custom_path='tta_rotnet_results/')
+                f_write = get_writer_to_all_result(args, config, custom_path=resutl_file_path)
                 f_write.write(f'All Corruptions: {corruptions}' + '\n\n')
                 f_write.write(f'TTA Results for Dataset: {dataset_name}' + '\n\n')
                 f_write.write(f'Checkpoint Used: {args.ckpts}' + '\n\n')
@@ -374,13 +395,18 @@ def tta_rotnet(args, config, train_writer=None):
             if corr_id == len(corruptions) - 1:
                 f_write.close()
 
-                print(f'Final Results Saved at:', os.path.join('tta_rotnet_results/', f'{logtime}_results.txt'))
+                print(f'Final Results Saved at:', resutl_file_path)
                 if train_writer is not None:
                     train_writer.close()
 
 
 def tta_tent(args, config, train_writer=None):
-    dataset_name = args.dataset_name
+    dataset_name = config.dataset.name
+    resutl_file_path = os.path.join(
+        "results_final_tta/",
+        args.method,
+        f"{dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
+    )
     assert dataset_name is not None
     # assert args.mask_ratio == 0.9
     if dataset_name == 'modelnet':
@@ -393,14 +419,14 @@ def tta_tent(args, config, train_writer=None):
         config.model.cls_dim = 55
     else:
         raise NotImplementedError
-    config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
+    # config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
     config.model.group_norm = args.group_norm
     npoints = config.npoints
     logger = get_logger(args.log_name)
     base_model = load_base_model(args, config, logger)
     adapted_model, optimizer = tent_shot_utils.setup_tent_shot(args, model=base_model)
     args.severity = 5
-    f_write, logtime = get_writer_to_all_result(args, config, custom_path='tta_tent_results/')
+    f_write = get_writer_to_all_result(args, config, custom_path=resutl_file_path)
     f_write.write(f'All Corruptions: {corruptions}' + '\n\n')
     f_write.write(f'TTA Results for Dataset: {dataset_name}' + '\n\n')
     f_write.write(f'Checkpoint Used: {args.ckpts}' + '\n\n')
@@ -449,7 +475,12 @@ def tta_tent(args, config, train_writer=None):
 
 
 def tta_t3a(args, config, train_writer=None):
-    dataset_name = args.dataset_name
+    dataset_name = config.dataset.name
+    resutl_file_path = os.path.join(
+        "results_final_tta/",
+        args.method,
+        f"{dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
+    )
     assert dataset_name is not None
     # assert args.mask_ratio == 0.9
     if dataset_name == 'modelnet':
@@ -462,17 +493,17 @@ def tta_t3a(args, config, train_writer=None):
         config.model.cls_dim = 55
     else:
         raise NotImplementedError
-    config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
+    # config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
     config.model.group_norm = args.group_norm
     npoints = config.npoints
     logger = get_logger(args.log_name)
     base_model = load_base_model(args, config, logger)
     ext, cls = t3a_utils.get_cls_ext(base_model)
-
+    args.num_classes = config.model.cls_dim
     adapted_model = t3a_utils.T3A(args, ext, cls, config)
 
     args.severity = 5
-    f_write, logtime = get_writer_to_all_result(args, config, custom_path='tta_t3a_results/')
+    f_write = get_writer_to_all_result(args, config, custom_path=resutl_file_path)
     f_write.write(f'All Corruptions: {corruptions}' + '\n\n')
     f_write.write(f'TTA Results for Dataset: {dataset_name}' + '\n\n')
     f_write.write(f'Checkpoint Used: {args.ckpts}' + '\n\n')
@@ -521,7 +552,12 @@ def tta_t3a(args, config, train_writer=None):
 
 
 def tta_shot(args, config, train_writer=None):
-    dataset_name = args.dataset_name
+    dataset_name = config.dataset.name
+    resutl_file_path = os.path.join(
+        "results_final_tta/",
+        args.method,
+        f"{dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
+    )
     assert dataset_name is not None
     # assert args.mask_ratio == 0.9
     if dataset_name == 'modelnet':
@@ -535,13 +571,13 @@ def tta_shot(args, config, train_writer=None):
     else:
         raise NotImplementedError
 
-    config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
+    # config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
     config.model.group_norm = args.group_norm
     npoints = config.npoints
     logger = get_logger(args.log_name)
     base_model = load_base_model(args, config, logger)
     adapted_model, optimizer = tent_shot_utils.setup_tent_shot(args, model=base_model)
-    f_write, logtime = get_writer_to_all_result(args, config, custom_path='tta_shot_results/')
+    f_write = get_writer_to_all_result(args, config, custom_path=resutl_file_path)
     f_write.write(f'All Corruptions: {corruptions}' + '\n\n')
     f_write.write(f'TTA Results for Dataset: {dataset_name}' + '\n\n')
     f_write.write(f'Checkpoint Used: {args.ckpts}' + '\n\n')
@@ -590,7 +626,7 @@ def tta_shot(args, config, train_writer=None):
 
 
 def tta(args, config, train_writer=None):
-    dataset_name = args.dataset_name
+    dataset_name = config.dataset.name
     npoints = config.npoints
     logger = get_logger(args.log_name)
 
@@ -604,7 +640,7 @@ def tta(args, config, train_writer=None):
 
             if corr_id == 0:  # for saving results for easy copying to google sheet
 
-                f_write, logtime = get_writer_to_all_result(args, config, custom_path='results_final_tta/')
+                f_write = get_writer_to_all_result(args, config, custom_path='results_final_tta/')
                 f_write.write(f'All Corruptions: {corruptions}' + '\n\n')
                 f_write.write(f'TTA Results for Dataset: {dataset_name}' + '\n\n')
                 f_write.write(f'Checkpoint Used: {args.ckpts}' + '\n\n')
@@ -726,7 +762,13 @@ def tta(args, config, train_writer=None):
 
 
 def tta_dua(args, config, train_writer=None):
-    dataset_name = args.dataset_name
+    dataset_name = config.dataset.name
+    resutl_file_path = os.path.join(
+        "results_final_tta/",
+        args.method,
+        f"{dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
+    )
+    
     # assert args.tta
     assert dataset_name is not None
     # assert args.mask_ratio == 0.9
@@ -747,7 +789,7 @@ def tta_dua(args, config, train_writer=None):
     args.disable_bn_adaptation = False
 
     args.batch_size_tta = 48
-    config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
+    # config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
     config.model.group_norm = args.group_norm
     npoints = config.npoints
     logger = get_logger(args.log_name)
@@ -760,7 +802,7 @@ def tta_dua(args, config, train_writer=None):
 
             if corr_id == 0:  # for saving results for easy copying to google sheet
 
-                f_write, logtime = get_writer_to_all_result(args, config, custom_path='results_final_tta/')
+                f_write = get_writer_to_all_result(args, config, custom_path=resutl_file_path)
                 f_write.write(f'All Corruptions: {corruptions}' + '\n\n')
                 f_write.write(f'TTA Results for Dataset: {dataset_name}' + '\n\n')
                 f_write.write(f'Checkpoint Used: {args.ckpts}' + '\n\n')
@@ -844,7 +886,7 @@ def tta_dua(args, config, train_writer=None):
             if corr_id == len(corruptions) - 1:
                 f_write.close()
 
-                print(f'Final Results Saved at:', os.path.join('results_final/', f'{logtime}_results.txt'))
+                print(f'Final Results Saved at:', resutl_file_path)
                 if train_writer is not None:
                     train_writer.close()
 
@@ -858,7 +900,7 @@ def to_categorical(y, num_classes):
 
 
 def tta_partseg(args, config, train_writer=None):
-    config.model.transformer_config.mask_ratio = args.mask_ratio
+    # config.model.transformer_config.mask_ratio = args.mask_ratio
     seg_classes = config.seg_classes
     num_classes = config.model.num_classes
 
@@ -875,15 +917,15 @@ def tta_partseg(args, config, train_writer=None):
             print(f'Evaluating ::: {args.corruption} ::: Level ::: {args.severity}')
 
             if args.corruption != 'clean':
-                root = os.path.join(root, f'{args.dataset_name}_c',
+                root = os.path.join(root, f'{config.dataset.name}_c',
                                     f'{args.corruption}_{args.severity}')
             else:
-                root = os.path.join(root, f'{args.dataset_name}_c',
+                root = os.path.join(root, f'{config.dataset.name}_c',
                                     f'{args.corruption}')
 
             if corr_id == 0:
                 res_dir_for_lazy_copying = 'tta_results_part_seg/'
-                f_write, logtime = get_writer_to_all_result(args, config,
+                f_write = get_writer_to_all_result(args, config,
                                                             custom_path=res_dir_for_lazy_copying)  # for saving results for easy copying to google sheet
                 f_write.write(f'All Corruptions: {corruptions_partnet}' + '\n\n')
 
@@ -1006,7 +1048,7 @@ def tta_partseg(args, config, train_writer=None):
 
 
 def tta_shapenet(args, config, train_writer=None):
-    config.model.transformer_config.mask_ratio = args.mask_ratio
+    # config.model.transformer_config.mask_ratio = args.mask_ratio
     seg_classes = config.seg_classes
     num_classes = config.model.num_classes
 
@@ -1022,7 +1064,7 @@ def tta_shapenet(args, config, train_writer=None):
 
             if corr_id == 0:
                 res_dir_for_lazy_copying = 'tta_results_shape_net/'
-                f_write, logtime = get_writer_to_all_result(args, config,
+                f_write = get_writer_to_all_result(args, config,
                                                             custom_path=res_dir_for_lazy_copying)  # for saving results for easy copying to google sheet
                 f_write.write(f'All Corruptions: {corruptions_h5}' + '\n\n')
 

@@ -183,15 +183,20 @@ def get_args():
             "source_only",
             "prototype_prune",
             "cls_prune",
-            "bftt3d"
+            "bftt3d",
+            "tent",
+            "rotnet",
+            "t3a",
+            "shot",
+            "dua",
         ],
         default="bftt3d",
     )
 
-    parser.add_argument("--tent_LR", type=float, default=1e-5)
-    # parser.add_argument('--LR', type=float, default= 0.005)
-    parser.add_argument("--tent_BETA", type=float, default=0.9)
-    parser.add_argument("--tent_WD", type=int, default=0.5)
+    # parser.add_argument("--LR", type=float, default=1e-5)
+    parser.add_argument('--LR', type=float, default= 0.005)
+    parser.add_argument("--BETA", type=float, default=0.9)
+    parser.add_argument("--WD", type=float, default=0.5)
     
     parser.add_argument("--bftt3d_stages", type=int, default=3)
     parser.add_argument("--bftt3d_dim", type=int, default=72)
@@ -199,6 +204,8 @@ def get_args():
     parser.add_argument("--bftt3d_alpha", type=int, default=1000)
     parser.add_argument("--bftt3d_beta", type=int, default=100)
     parser.add_argument("--bftt3d_gamma", type=int, default=205)
+    
+    parser.add_argument("--t3a_filter_k", type=int, default=-1)
 
     args = parser.parse_args()
 

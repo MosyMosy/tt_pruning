@@ -115,13 +115,13 @@ class T3A(nn.Module):
 
     def select_supports(self):
         ent_s = self.ent
-        y_hat = self.labels.argmax(dim=1).long()
+        y_hat = self.labels.argmax(dim=1).long().to(ent_s.device)
         filter_K = self.filter_K
         if filter_K == -1:
-            indices = torch.LongTensor(list(range(len(ent_s))))
+            indices = torch.LongTensor(list(range(len(ent_s)))).to(ent_s.device)
 
         indices = []
-        indices1 = torch.LongTensor(list(range(len(ent_s))))
+        indices1 = torch.LongTensor(list(range(len(ent_s)))).to(ent_s.device)
         for i in range(self.num_classes):
             _, indices2 = torch.sort(ent_s[y_hat == i])
             indices.append(indices1[y_hat == i][indices2][:filter_K])
