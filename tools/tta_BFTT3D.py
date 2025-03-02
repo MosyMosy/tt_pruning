@@ -134,6 +134,11 @@ def runner(args, config):
     print_log('==> creating model..')
     source_model = load_base_model(args, config, logger)
     source_model.eval()
+    if args.BN_reset:
+        for m in source_model.modules():
+            if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
+                m.running_mean = None  # for original implementation of tent
+                m.running_var = None  # for original implementation of tent
     
     print_log('==> Preparing data..')
     train_loader = load_clean_dataset(args, config)

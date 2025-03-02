@@ -166,6 +166,13 @@ def get_args():
         default=False,
         help="training modelnet from scratch",
     )
+    
+    parser.add_argument(
+        "--BN_reset",
+        action="store_true",
+        help="Reset batch norm running statistics similar to TENT",
+    )
+    
     parser.add_argument(
         "--mode",
         choices=["easy", "median", "hard", None],

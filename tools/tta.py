@@ -122,6 +122,12 @@ def eval_source(args, config):
             test_pred = []
             test_label = []
             base_model.eval()
+            
+            if args.BN_reset:
+                for m in base_model.modules():
+                    if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
+                        m.running_mean = None  # for original implementation of tent
+                        m.running_var = None  # for original implementation of tent
 
             inference_loader = load_tta_dataset(args, config)
 

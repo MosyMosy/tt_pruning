@@ -133,7 +133,6 @@ def runner(args, config):
     if args.method in [
         "prototype_prune",
         "cls_prune",
-        "source_only",
     ]:
         eval_prune(
             args,
@@ -250,44 +249,40 @@ def eval_prune(
                 labels = [labels for _ in range(args.batch_size_tta)]
                 labels = torch.cat(labels, dim=0)
                         
-                
-                if args.method in ["source_only"]:     
-                    with torch.no_grad():
-                        logits = base_model(points)
 
-                elif args.method in ["prototype_prune", "cls_prune"]:
-                    # reset batchnorm running stats
+                # reset batchnorm running stats
+                if args.BN_reset:
                     for m in base_model.modules():
                         if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
                             m.running_mean = None  # for original implementation of tent
                             m.running_var = None  # for original implementation of tent
-                    prune_sizes = [0, 2, 4, 8, 16]
-                    logits = []
-                    for i in range(len(prune_sizes)):
-                        if args.method == "prototype_prune":
-                            with torch.no_grad():
-                                logits.append(
-                                    base_model.module.forward_prototype_prune(
-                                        points,
-                                        source_stats=(
-                                            clean_intermediates_mean,
-                                            clean_intermediates_std,
-                                        ),
-                                        layer_idx=[0],
-                                        prune_size=prune_sizes[i],
-                                    ).unsqueeze(1)
-                                )
-                        elif args.method == "cls_prune":
-                            with torch.no_grad():
-                                logits.append(
-                                    base_model.module.forward_cls_prune(
-                                        points,
-                                        prune_size=prune_sizes[i],
-                                    ).unsqueeze(1)
-                                )
-                    logits = torch.cat(logits, dim=1)
-                    entropy = softmax_entropy(logits, dim=-1)
-                    logits = logits[torch.arange(logits.shape[0]), entropy.argmin(dim=-1)]
+                prune_sizes = [0, 2, 4, 8, 16]
+                logits = []
+                for i in range(len(prune_sizes)):
+                    if args.method == "prototype_prune":
+                        with torch.no_grad():
+                            logits.append(
+                                base_model.module.forward_prototype_prune(
+                                    points,
+                                    source_stats=(
+                                        clean_intermediates_mean,
+                                        clean_intermediates_std,
+                                    ),
+                                    layer_idx=[0],
+                                    prune_size=prune_sizes[i],
+                                ).unsqueeze(1)
+                            )
+                    elif args.method == "cls_prune":
+                        with torch.no_grad():
+                            logits.append(
+                                base_model.module.forward_cls_prune(
+                                    points,
+                                    prune_size=prune_sizes[i],
+                                ).unsqueeze(1)
+                            )
+                logits = torch.cat(logits, dim=1)
+                entropy = softmax_entropy(logits, dim=-1)
+                logits = logits[torch.arange(logits.shape[0]), entropy.argmin(dim=-1)]
 
                 target = labels.view(-1)
                 pred = logits.argmax(-1).view(-1)
