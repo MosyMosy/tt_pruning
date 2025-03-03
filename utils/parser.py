@@ -199,6 +199,9 @@ def get_args():
         ],
         default="bftt3d",
     )
+    
+    parser.add_argument("--prune_size_list", nargs="*", type=int, default=[0, 2, 4, 8, 16, 32])
+
 
     # parser.add_argument("--LR", type=float, default=1e-5)
     parser.add_argument('--LR', type=float, default= 0.005)

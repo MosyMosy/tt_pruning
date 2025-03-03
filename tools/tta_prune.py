@@ -98,26 +98,26 @@ def runner(args, config):
     source_model.eval()
 
     if args.method in ["prototype_prune"]:
-        # clean_intermediates_path = (
-        #     f"intermediate_features/{dataset_name}_clean_intermediates.pth"
-        # )
-        # if os.path.exists(clean_intermediates_path):
-        #     clean_intermediates = torch.load(clean_intermediates_path)
-        #     clean_intermediates_mean, clean_intermediates_std = (
-        #         clean_intermediates["mean"],
-        #         clean_intermediates["std"],
-        #     )
-        # else:
-        clean_intermediates_mean, clean_intermediates_std = (
-            generate_intermediate_embeddings(args, config, source_model)
+        clean_intermediates_path = (
+            f"intermediate_features/{dataset_name}_clean_intermediates.pth"
         )
-            # torch.save(
-            #     {
-            #         "mean": clean_intermediates_mean.cpu(),
-            #         "std": clean_intermediates_std.cpu(),
-            #     },
-            #     clean_intermediates_path,
-            # )
+        if os.path.exists(clean_intermediates_path):
+            clean_intermediates = torch.load(clean_intermediates_path)
+            clean_intermediates_mean, clean_intermediates_std = (
+                clean_intermediates["mean"],
+                clean_intermediates["std"],
+            )
+        else:
+            clean_intermediates_mean, clean_intermediates_std = (
+                generate_intermediate_embeddings(args, config, source_model)
+            )
+            torch.save(
+                {
+                    "mean": clean_intermediates_mean.cpu(),
+                    "std": clean_intermediates_std.cpu(),
+                },
+                clean_intermediates_path,
+            )
         clean_intermediates_mean = clean_intermediates_mean.cuda()
         clean_intermediates_std = clean_intermediates_std.cuda()
 
@@ -213,7 +213,7 @@ def eval_prune(
             # if corr_id not in [ 2]:
             #     continue
 
-            if corr_id == 0:  # for saving results for easy copying to google sheet
+            if "f_write" not in locals():  # for saving results for easy copying to google sheet
                 f_write = get_writer_to_all_result(
                     args, config, custom_path=resutl_file_path
                 )
@@ -256,7 +256,7 @@ def eval_prune(
                         if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
                             m.running_mean = None  # for original implementation of tent
                             m.running_var = None  # for original implementation of tent
-                prune_sizes = [0, 2, 4, 8, 16]
+                prune_sizes = args.prune_size_list
                 logits = []
                 for i in range(len(prune_sizes)):
                     if args.method == "prototype_prune":
