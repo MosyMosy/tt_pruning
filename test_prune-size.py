@@ -100,7 +100,7 @@ def main(args):
 
     args.split = "test"
     
-    for i in range(5, 32):
+    for i in range(48):
         args.prune_size_list = [i]
         methods_dict[args.method](args, config)
 

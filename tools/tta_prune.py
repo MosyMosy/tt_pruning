@@ -127,7 +127,7 @@ def runner(args, config):
     resutl_file_path = os.path.join(
         "results_final_tta/",
         args.method,
-        f"{dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
+        f"{args.exp_name}_{dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
     )
 
     if args.method in [
@@ -210,8 +210,8 @@ def eval_prune(
                 continue
                 # raise NotImplementedError('Not possible to use tta with clean data, please modify the list above')
 
-            # if corr_id not in [ 2]:
-            #     continue
+            if corr_id not in [2]:
+                continue
 
             if "f_write" not in locals():  # for saving results for easy copying to google sheet
                 f_write = get_writer_to_all_result(
@@ -282,6 +282,7 @@ def eval_prune(
                             )
                 logits = torch.cat(logits, dim=1)
                 entropy = softmax_entropy(logits, dim=-1)
+                f_write.write(" ".join(entropy[0]) + "\n")
                 logits = logits[torch.arange(logits.shape[0]), entropy.argmin(dim=-1)]
 
                 target = labels.view(-1)

@@ -91,10 +91,10 @@ python main.py --config cfgs/baselines/shapenet/tta_rotnet.yaml --ckpts checkpoi
 
 export CUDA_VISIBLE_DEVICES=2
 
-python main_2.py --config cfgs/tta_prune/tta_prune_scanobject.yaml --ckpts checkpoints/scan_object_src_only.pth --method prototype_prune
-python main_2.py --config cfgs/tta_prune/tta_prune_modelnet.yaml --ckpts checkpoints/modelnet_src_only.pth --method prototype_prune
-python main_2.py --config cfgs/tta_prune/tta_prune_shapenet.yaml --ckpts checkpoints/shapenet_src_only.pth --method prototype_prune
+python test_prune-size.py --config cfgs/tta_prune/tta_prune_scanobject.yaml --ckpts checkpoints/scan_object_src_only.pth --method prototype_prune
+python test_prune-size.py --config cfgs/tta_prune/tta_prune_modelnet.yaml --ckpts checkpoints/modelnet_src_only.pth --method prototype_prune
+python test_prune-size.py --config cfgs/tta_prune/tta_prune_shapenet.yaml --ckpts checkpoints/shapenet_src_only.pth --method prototype_prune
 
-python main_2.py --config cfgs/tta_prune/tta_prune_scanobject.yaml --ckpts checkpoints/scan_object_src_only.pth --method prototype_prune  --BN_reset
-python main_2.py --config cfgs/tta_prune/tta_prune_modelnet.yaml --ckpts checkpoints/modelnet_src_only.pth --method prototype_prune  --BN_reset
-python main_2.py --config cfgs/tta_prune/tta_prune_shapenet.yaml --ckpts checkpoints/shapenet_src_only.pth --method prototype_prune  --BN_reset
+python test_prune-size.py --config cfgs/tta_prune/tta_prune_scanobject.yaml --ckpts checkpoints/scan_object_src_only.pth --method prototype_prune  --BN_reset
+python test_prune-size.py --config cfgs/tta_prune/tta_prune_modelnet.yaml --ckpts checkpoints/modelnet_src_only.pth --method prototype_prune  --BN_reset
+python test_prune-size.py --config cfgs/tta_prune/tta_prune_shapenet.yaml --ckpts checkpoints/shapenet_src_only.pth --method prototype_prune  --BN_reset
