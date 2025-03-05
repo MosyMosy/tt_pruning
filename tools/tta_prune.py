@@ -210,8 +210,8 @@ def eval_prune(
                 continue
                 # raise NotImplementedError('Not possible to use tta with clean data, please modify the list above')
 
-            if corr_id not in [2]:
-                continue
+            # if corr_id not in [2]:
+            #     continue
 
             if "f_write" not in locals():  # for saving results for easy copying to google sheet
                 f_write = get_writer_to_all_result(
@@ -227,6 +227,7 @@ def eval_prune(
             tta_loader = load_tta_dataset(args, config)
             test_pred = []
             test_label = []
+            entropy_list = []
             
             base_model = load_base_model(args, config, logger, pretrained=False)
             base_model.load_state_dict(source_model.state_dict())
@@ -282,7 +283,7 @@ def eval_prune(
                             )
                 logits = torch.cat(logits, dim=1)
                 entropy = softmax_entropy(logits, dim=-1)
-                f_write.write(" ".join(entropy[0]) + "\n")
+                # entropy_list.append(entropy.mean().cpu())
                 logits = logits[torch.arange(logits.shape[0]), entropy.argmin(dim=-1)]
 
                 target = labels.view(-1)
@@ -324,6 +325,9 @@ def eval_prune(
                 logger=logger,
             )
             f_write.write(" ".join([str(round(float(xx), 3)) for xx in [acc]]) + "\n")
+            # f_write.write(
+            #     " ".join([str(round(float(xx), 3)) for xx in [torch.stack(entropy_list).mean().item()]]) + "\n"
+            # )
             f_write.flush()
 
             if corr_id == len(corruptions) - 1:

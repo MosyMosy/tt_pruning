@@ -98,3 +98,9 @@ python test_prune-size.py --config cfgs/tta_prune/tta_prune_shapenet.yaml --ckpt
 python test_prune-size.py --config cfgs/tta_prune/tta_prune_scanobject.yaml --ckpts checkpoints/scan_object_src_only.pth --method prototype_prune  --BN_reset
 python test_prune-size.py --config cfgs/tta_prune/tta_prune_modelnet.yaml --ckpts checkpoints/modelnet_src_only.pth --method prototype_prune  --BN_reset
 python test_prune-size.py --config cfgs/tta_prune/tta_prune_shapenet.yaml --ckpts checkpoints/shapenet_src_only.pth --method prototype_prune  --BN_reset
+
+
+
+python test_prune-size.py --config cfgs/tta_prune/tta_prune_shapenet.yaml --ckpts checkpoints/shapenet_src_only.pth --method prototype_prune  --BN_reset
+python test_prune-size.py --config cfgs/tta_prune/tta_prune_shapenet.yaml --ckpts checkpoints/shapenet_src_only.pth --method tent  
+

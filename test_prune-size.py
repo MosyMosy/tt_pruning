@@ -100,8 +100,12 @@ def main(args):
 
     args.split = "test"
     
-    for i in range(48):
-        args.prune_size_list = [i]
+    # for i in range(48):
+    #     args.prune_size_list = [i]
+    #     methods_dict[args.method](args, config)
+        
+    for i in [2,4,8,16,32,48,64,128]:
+        args.batch_size = [i]
         methods_dict[args.method](args, config)
 
 
