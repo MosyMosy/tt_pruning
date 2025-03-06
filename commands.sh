@@ -80,15 +80,6 @@ python main.py --config cfgs/baselines/modelnet/tta_rotnet.yaml --ckpts cfgs/bas
 python main.py --config cfgs/baselines/shapenet/tta_rotnet.yaml --ckpts checkpoints/shapenet_src_only.pth --method rotnet
 
 
-
-
-
-
-
-
-
-
-
 export CUDA_VISIBLE_DEVICES=2
 
 python test_prune-size.py --config cfgs/tta_prune/tta_prune_scanobject.yaml --ckpts checkpoints/scan_object_src_only.pth --method prototype_prune
@@ -101,6 +92,11 @@ python test_prune-size.py --config cfgs/tta_prune/tta_prune_shapenet.yaml --ckpt
 
 
 
-python test_prune-size.py --config cfgs/tta_prune/tta_prune_shapenet.yaml --ckpts checkpoints/shapenet_src_only.pth --method prototype_prune  --BN_reset
-python test_prune-size.py --config cfgs/tta_prune/tta_prune_shapenet.yaml --ckpts checkpoints/shapenet_src_only.pth --method tent  
+python test_prune-size.py --config cfgs/tta_prune/tta_prune_shapenet.yaml --ckpts checkpoints/shapenet_src_only.pth --method prototype_prune  --BN_reset --exp_name batch_test
+python test_prune-size.py --config cfgs/baselines/shapenet/tta_tent.yaml--ckpts checkpoints/shapenet_src_only.pth --method tent  --exp_name batch_test
+
+
+
+python main.py --config cfgs/tta_prune/tta_prune_modelnet.yaml --ckpts checkpoints/modelnet_src_only.pth --method prototype_prune --BN_reset --exp_name time_eval
+python main.py --config cfgs/tta_prune/tta_prune_modelnet.yaml --ckpts checkpoints/modelnet_src_only.pth --method bftt3d --exp_name time_eval
 

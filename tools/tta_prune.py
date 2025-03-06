@@ -6,6 +6,7 @@ from utils.logger import *
 import datasets.tta_datasets as tta_datasets
 from torch.utils.data import DataLoader
 from utils.misc import *
+import numpy as np
 
 
 level = [5]
@@ -24,7 +25,7 @@ def load_tta_dataset(args, config):
                 dataset=inference_dataset,
                 batch_size=args.batch_size,
                 shuffle=args.shuffle,
-                drop_last=False,
+                drop_last=True,
             )
         else:
             inference_dataset = tta_datasets.ModelNet40C(args, root)
@@ -32,7 +33,7 @@ def load_tta_dataset(args, config):
                 dataset=inference_dataset,
                 batch_size=args.batch_size,
                 shuffle=args.shuffle,
-                drop_last=False,
+                drop_last=True,
             )
 
     elif config.dataset.name == "scanobject":
@@ -41,7 +42,7 @@ def load_tta_dataset(args, config):
             inference_dataset,
             batch_size=args.batch_size,
             shuffle=args.shuffle,
-            drop_last=False,
+            drop_last=True,
         )
 
     elif config.dataset.name == "shapenetcore":
@@ -50,7 +51,7 @@ def load_tta_dataset(args, config):
             inference_dataset,
             batch_size=args.batch_size,
             shuffle=args.shuffle,
-            drop_last=False,
+            drop_last=True,
         )
 
     else:
@@ -202,8 +203,10 @@ def eval_prune(
     clean_intermediates_std,
     resutl_file_path,
 ):
+    time_list = []
     for args.severity in level:
         for corr_id, args.corruption in enumerate(corruptions):
+            start_time = time.time()
             acc_sliding_window = list()
             acc_avg = list()
             if args.corruption == "clean":
@@ -229,6 +232,7 @@ def eval_prune(
             test_label = []
             entropy_list = []
             
+            
             base_model = load_base_model(args, config, logger, pretrained=False)
             base_model.load_state_dict(source_model.state_dict())
             
@@ -236,6 +240,7 @@ def eval_prune(
                 # now inferring on this one sample
                 
                 # reset batchnorm running stats
+                
                 base_model.eval()
                 
                 
@@ -312,6 +317,8 @@ def eval_prune(
                     )
 
                     acc_avg.append(acc.cpu())
+            end_time = time.time()
+            time_list.append(end_time - start_time)
             test_pred = torch.cat(test_pred, dim=0)
             test_label = torch.cat(test_label, dim=0)
 
@@ -331,6 +338,23 @@ def eval_prune(
             f_write.flush()
 
             if corr_id == len(corruptions) - 1:
+                # write min, max, and average, variance,  of times
+                f_write.write(
+                    " ".join(
+                        [
+                            str(round(float(xx), 3))
+                            for xx in [
+                                min(time_list),
+                                max(time_list),
+                                sum(time_list) / len(time_list),
+                                np.var(time_list),
+                            ]
+                        ]
+                    )
+                    + "\n"
+                )
+                
+                f_write.flush()
                 f_write.close()
 
                 print(

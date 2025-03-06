@@ -414,7 +414,7 @@ def zscore_distance(tokens, mean, std):
 
     return zscore_dist
 
-def cosine_distance(tokens, mean):
+def cosine_distance(tokens, mean, std=0):
     """
     Compute cosine distance between tokens and pre-training mean.
 
@@ -435,28 +435,8 @@ def cosine_distance(tokens, mean):
 
     return cosine_dist
 
-def zscore_distance_2(tokens, mean, std):
-    """
-    Compute Z-score distance between tokens and pre-training statistics.
 
-    Args:
-        tokens (torch.Tensor): Test-time token embeddings, shape (B, N, C)
-        mean (torch.Tensor): Pre-training mean, shape (1, 1, C)
-        std (torch.Tensor): Pre-training std deviation, shape (1, 1, C)
-
-    Returns:
-        torch.Tensor: Z-score distance for each token, shape (B, N)
-    """
-    # Compute Z-score
-    z_score = (tokens - mean)  # Shape: (B, N, C)
-
-    # Compute Euclidean (L2) norm across the feature dimension (C)
-    zscore_dist = z_score.sum(dim=-1)  # Shape: (B, N)
-
-    return zscore_dist
-
-
-def euclidean_distance(tokens, mean):
+def euclidean_distance(tokens, mean, std=0):
     """
     Compute Euclidean distance between tokens and pre-training mean.
 
