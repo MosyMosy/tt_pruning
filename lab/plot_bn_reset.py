@@ -9,7 +9,7 @@ values = {
 }
 
 # Define more distinct scientific colors
-colors = ["midnightblue", "darkcyan"]  # More contrasting cool colors
+colors = ["#cd6155", "#5499c7"]  # More contrasting cool colors
 
 # Define font sizes for customization
 axis_label_fontsize = 18

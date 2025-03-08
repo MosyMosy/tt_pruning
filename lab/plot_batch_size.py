@@ -17,9 +17,9 @@ legend_fontsize = 18
 plt.figure(figsize=(6, 3))
 
 # Plot PG-SP
-plt.plot(batch_sizes, pg_sp_acc, marker='o', linestyle='-', linewidth=2, markersize=6, label='PG-SP', color='tab:blue')
+plt.plot(batch_sizes, pg_sp_acc, marker='o', linestyle='-', linewidth=2, markersize=6, label='PG-SP', color="#5499c7")
 # Plot TENT
-plt.plot(batch_sizes, tent_acc, marker='s', linestyle='--', linewidth=2, markersize=6, label='TENT', color='tab:orange')
+plt.plot(batch_sizes, tent_acc, marker='s', linestyle='--', linewidth=2, markersize=6, label='TENT', color="#cd6155")
 
 # Labels with controlled font size
 plt.xlabel("Batch Size", fontsize=axis_label_fontsize)

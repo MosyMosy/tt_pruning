@@ -84,8 +84,7 @@ def main(args):
     # args.batch_size = 1
     # config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
     config.model.group_norm = args.group_norm
-
-
+    
     methods_dict = {
         "source_only": eval_source,
         "prototype_prune": runner,
