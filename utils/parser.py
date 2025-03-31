@@ -30,7 +30,7 @@ def get_args():
     parser.add_argument(
         "--config",
         type=str,
-        default="cfgs/tta_prune/tta_prune_shapenet.yaml",
+        default="cfgs/tta_purge/tta_purge_shapenet.yaml",
         help="yaml config file",
     )
     parser.add_argument(
@@ -182,14 +182,14 @@ def get_args():
     parser.add_argument("--way", type=int, default=-1)
     parser.add_argument("--shot", type=int, default=-1)
     parser.add_argument("--fold", type=int, default=-1)
-    parser.add_argument("--train_with_prune", action="store_true", default=False)
+    parser.add_argument("--train_with_purge", action="store_true", default=False)
     parser.add_argument(
         "--method",
         type=str,
         choices=[
             "source_only",
-            "prototype_prune",
-            "cls_prune",
+            "prototype_purge",
+            "cls_purge",
             "bftt3d",
             "tent",
             "rotnet",
@@ -197,10 +197,10 @@ def get_args():
             "shot",
             "dua",
         ],
-        default="prototype_prune",
+        default="source_only",
     )
     
-    parser.add_argument("--prune_size_list", nargs="*", type=int, default=[0, 2, 4, 8, 16, 32])
+    parser.add_argument("--purge_size_list", nargs="*", type=int, default=[0, 2, 4, 8, 16, 32])
 
 
     # parser.add_argument("--LR", type=float, default=1e-5)

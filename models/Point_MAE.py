@@ -326,7 +326,7 @@ class TransformerEncoder(nn.Module):
 
         return x, (dist_min, dist_max, dist_mean, threshold)
 
-    def forward_prototype_prune(self, x, pos, source_stats, layer_idx, prune_size=16):
+    def forward_prototype_purge(self, x, pos, source_stats, layer_idx, purge_size=16):
         for i, block in enumerate(self.blocks):
             if i in layer_idx:
                 B, N, C = x.shape
@@ -344,7 +344,7 @@ class TransformerEncoder(nn.Module):
                 # z_score = (x_distance - x_distance.mean()) / x_distance.std()
                 threshold_max = misc.best_threshold_model(x_distance)
                 x_mask_max = x_distance <= max(threshold_max, x_distance.min() + 2)
-                to_mask_count = prune_size  # (~x_mask_max).sum(dim=-1).float().mean().int()
+                to_mask_count = purge_size  # (~x_mask_max).sum(dim=-1).float().mean().int()
                 to_keep_indices = x_distance.argsort(dim=-1)[:, : N - 1 - to_mask_count]
                 to_keep_indices = to_keep_indices.sort(dim=-1)[0]
                 to_keep_indices = to_keep_indices.unsqueeze(-1).expand(-1, -1, C)
@@ -358,7 +358,7 @@ class TransformerEncoder(nn.Module):
             x = block(x + pos)
         return x
 
-    def forward_cls_prune(self, x, pos,  prune_size=16):
+    def forward_cls_purge(self, x, pos,  purge_size=16):
         for i, block in enumerate(self.blocks):
             if i in [0]:
                 B, N, C = x.shape
@@ -383,7 +383,7 @@ class TransformerEncoder(nn.Module):
                 cosine_distance = misc.cosine_distance(cls_query, token_key)
 
                 to_keep_indices = cosine_distance.argsort(dim=-1)[
-                    :, : N - 1 - prune_size
+                    :, : N - 1 - purge_size
                 ]
                 to_keep_indices = to_keep_indices.sort(dim=-1)[0]
                 to_keep_indices = to_keep_indices.unsqueeze(-1).expand(-1, -1, C)
@@ -585,7 +585,7 @@ class PointTransformer(nn.Module):
 
         return ret, (dist_min, dist_max, dist_mean, threshold)
 
-    def forward_prototype_prune(self, pts, source_stats, layer_idx=None, prune_size=16):
+    def forward_prototype_purge(self, pts, source_stats, layer_idx=None, purge_size=16):
         if layer_idx is None:
             layer_idx = range(self.depth)
         neighborhood, center = self.group_divider(pts)
@@ -598,8 +598,8 @@ class PointTransformer(nn.Module):
         x = torch.cat((cls_tokens, group_input_tokens), dim=1)
         pos = torch.cat((cls_pos, pos), dim=1)
         # transformer
-        x = self.blocks.forward_prototype_prune(
-            x, pos, source_stats, layer_idx, prune_size=prune_size
+        x = self.blocks.forward_prototype_purge(
+            x, pos, source_stats, layer_idx, purge_size=purge_size
         )
         x = self.norm(x)
         concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
@@ -607,7 +607,7 @@ class PointTransformer(nn.Module):
 
         return ret
 
-    def forward_cls_prune(self, pts, prune_size=16):
+    def forward_cls_purge(self, pts, purge_size=16):
         neighborhood, center = self.group_divider(pts)
         group_input_tokens = self.encoder(neighborhood)  # B G N
         cls_tokens = self.cls_token.expand(group_input_tokens.size(0), -1, -1)
@@ -618,7 +618,7 @@ class PointTransformer(nn.Module):
         x = torch.cat((cls_tokens, group_input_tokens), dim=1)
         pos = torch.cat((cls_pos, pos), dim=1)
         # transformer
-        x = self.blocks.forward_cls_prune(x, pos, prune_size=prune_size)
+        x = self.blocks.forward_cls_purge(x, pos, purge_size=purge_size)
         x = self.norm(x)
         concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
         ret = self.class_head(concat_f)

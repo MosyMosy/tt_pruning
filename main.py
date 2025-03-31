@@ -1,7 +1,7 @@
 from utils import parser, dist_utils, misc
 from utils.logger import *
 from utils.config import *
-from tools.tta_prune import runner
+from tools.tta_purge import runner
 from tools.tta_BFTT3D import runner as runner_BFTT3D
 from tools.tta import tta_tent, tta_rotnet, tta_t3a, tta_shot, tta_dua, eval_source
 import time
@@ -87,8 +87,8 @@ def main(args):
     
     methods_dict = {
         "source_only": eval_source,
-        "prototype_prune": runner,
-        "cls_prune": runner,
+        "prototype_purge": runner,
+        "cls_purge": runner,
         "bftt3d": runner_BFTT3D,
         "tent": tta_tent,
         "rotnet": tta_rotnet,
