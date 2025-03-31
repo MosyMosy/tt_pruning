@@ -23,13 +23,13 @@ entropy_values = [
 # Font size settings
 axis_label_fontsize = 18
 axis_number_fontsize = 14
-legend_fontsize = 17
+legend_fontsize = 18
 
 # Create figure and primary axis with tight layout to remove margins
 fig, ax1 = plt.subplots(figsize=(10, 7), tight_layout=True)
 
 # Plot accuracy on primary axis
-ax1.plot(purge_sizes, top1_accuracies, marker='o', linestyle='-', color='black', label='Top1 Accuracy')
+ax1.plot(purge_sizes, top1_accuracies, marker='o', linestyle='-', color='black', label='Top1 ACC')
 
 # Highlight area from 0 to 32
 ax1.axvspan(0, 32, color='yellow', alpha=0.3)

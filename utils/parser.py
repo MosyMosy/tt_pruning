@@ -24,13 +24,13 @@ def get_args():
     parser.add_argument(
         "--ckpts",
         type=str,
-        default="checkpoints/scan_object_src_only.pth",
+        default="checkpoints/shapenet_src_only.pth",
         help="test used ckpt path",
     )  # default="checkpoints/modelnet_src_only.pth", help='test used ckpt path'
     parser.add_argument(
         "--config",
         type=str,
-        default="cfgs/tta_prune/tta_prune_scanobject.yaml",
+        default="cfgs/tta_prune/tta_prune_shapenet.yaml",
         help="yaml config file",
     )
     parser.add_argument(
