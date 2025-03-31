@@ -108,8 +108,10 @@ def eval_source(args, config):
     else:
         raise NotImplementedError
 
+    time_list = []
     for args.severity in level:
         for corr_id, args.corruption in enumerate(corruptions):
+            start_time = time.time()
             if corr_id == 0:
                 f_write = get_writer_to_all_result(
                     args, config, custom_path=resutl_file_path
@@ -177,6 +179,8 @@ def eval_source(args, config):
                 acc = (
                     (test_pred == test_label).sum() / float(test_label.size(0)) * 100.0
                 )
+                end_time = time.time()
+                time_list.append(end_time - start_time)
                 print(
                     f"Source Peformance ::: Corruption ::: {args.corruption} ::: {acc}"
                 )
@@ -187,6 +191,22 @@ def eval_source(args, config):
                 f_write.flush()
 
                 if corr_id == len(corruptions) - 1:
+                    f_write.write(
+                        " ".join(
+                            [
+                                str(round(float(xx), 3))
+                                for xx in [
+                                    min(time_list),
+                                    max(time_list),
+                                    sum(time_list) / len(time_list),
+                                    np.var(time_list),
+                                ]
+                            ]
+                        )
+                        + "\n"
+                    )
+
+                    f_write.flush()
                     f_write.close()
                     print(f"Final Results Saved at:", resutl_file_path)
 

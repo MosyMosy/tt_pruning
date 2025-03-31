@@ -317,8 +317,8 @@ def eval_prune(
                     )
 
                     acc_avg.append(acc.cpu())
-            end_time = time.time()
-            time_list.append(end_time - start_time)
+            
+            
             test_pred = torch.cat(test_pred, dim=0)
             test_label = torch.cat(test_label, dim=0)
 
@@ -327,6 +327,8 @@ def eval_prune(
                 test_label = dist_utils.gather_tensor(test_label, args)
 
             acc = (test_pred == test_label).sum() / float(test_label.size(0)) * 100.0
+            end_time = time.time()
+            time_list.append(end_time - start_time)
             print_log(
                 f"\n\n######## Final Accuracy ::: {args.corruption} ::: {acc} ########\n\n",
                 logger=logger,

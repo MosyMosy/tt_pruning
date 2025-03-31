@@ -25,6 +25,7 @@ model : {
   num_hid_cls_layers: 2,
   group_norm: False,
   regularize : False,
+  cls_dim: 40,
 
   transformer_config: {
     mask_ratio: 0.9,
