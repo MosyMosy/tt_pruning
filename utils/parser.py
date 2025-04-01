@@ -24,13 +24,13 @@ def get_args():
     parser.add_argument(
         "--ckpts",
         type=str,
-        default="checkpoints/shapenet_src_only.pth",
+        default="checkpoints/scan_object_src_only.pth",
         help="test used ckpt path",
     )  # default="checkpoints/modelnet_src_only.pth", help='test used ckpt path'
     parser.add_argument(
         "--config",
         type=str,
-        default="cfgs/tta_purge/tta_purge_shapenet.yaml",
+        default="cfgs/tta_purge/tta_purge_scanobject.yaml",
         help="yaml config file",
     )
     parser.add_argument(
@@ -197,7 +197,7 @@ def get_args():
             "shot",
             "dua",
         ],
-        default="source_only",
+        default="prototype_purge",
     )
     
     parser.add_argument("--purge_size_list", nargs="*", type=int, default=[0, 2, 4, 8, 16, 32])
