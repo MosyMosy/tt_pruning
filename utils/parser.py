@@ -9,7 +9,7 @@ def get_args():
     parser.add_argument("--alpha", type=float, default=0.0)
     parser.add_argument("--batch_size_tta", type=int, default=1)
     parser.add_argument("--stride_step", type=int, default=1)
-    parser.add_argument("--batch_size", type=int, default=1)
+    parser.add_argument("--batch_size", type=int, default=2)
     parser.add_argument("--grad_steps", type=int, default=0)
     parser.add_argument(
         "--disable_bn_adaptation",

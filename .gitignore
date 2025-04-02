@@ -180,4 +180,6 @@ results_final_tta/
 experiments/
 label_features/
 
+lab/Batch_Norm_Analyzer/
+
 *.xyz
