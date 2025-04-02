@@ -4,6 +4,7 @@ from utils.config import *
 from tools.tta_purge import runner
 from tools.tta_BFTT3D import runner as runner_BFTT3D
 from tools.tta import tta_tent, tta_rotnet, tta_t3a, tta_shot, tta_dua, eval_source
+from tools.tta_x import runner as runner_x
 import time
 import os
 import torch
@@ -95,6 +96,7 @@ def main(args):
         "t3a": tta_t3a,
         "shot": tta_shot,
         "dua": tta_dua,
+        "tta_x": runner_x,
     }
 
     args.split = "test"

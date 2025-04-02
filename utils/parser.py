@@ -9,7 +9,7 @@ def get_args():
     parser.add_argument("--alpha", type=float, default=0.0)
     parser.add_argument("--batch_size_tta", type=int, default=1)
     parser.add_argument("--stride_step", type=int, default=1)
-    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--grad_steps", type=int, default=0)
     parser.add_argument(
         "--disable_bn_adaptation",
@@ -196,8 +196,9 @@ def get_args():
             "t3a",
             "shot",
             "dua",
+            "tta_x",
         ],
-        default="prototype_purge",
+        default="tta_x",
     )
     
     parser.add_argument("--purge_size_list", nargs="*", type=int, default=[0, 2, 4, 8, 16, 32])

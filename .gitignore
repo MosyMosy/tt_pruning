@@ -178,6 +178,6 @@ checkpoints/
 intermediate_features/
 results_final_tta/
 experiments/
-
+label_features/
 
 *.xyz

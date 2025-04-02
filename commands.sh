@@ -1,4 +1,36 @@
 # export CUDA_VISIBLE_DEVICES=3
+# Prototype Pruning
+python main.py --config cfgs/tta_purge/tta_purge_scanobject.yaml --ckpts checkpoints/scan_object_src_only.pth --method tta_x --batch_size 16
+python main.py --config cfgs/tta_purge/tta_purge_modelnet.yaml --ckpts checkpoints/modelnet_src_only.pth --method tta_x --batch_size 16
+python main.py --config cfgs/tta_purge/tta_purge_shapenet.yaml --ckpts checkpoints/shapenet_src_only.pth --method tta_x --batch_size 16
+
+
+python main.py --config cfgs/tta_purge/tta_purge_scanobject.yaml --ckpts checkpoints/scan_object_src_only.pth --method tta_x --batch_size 16 --BN_reset
+python main.py --config cfgs/tta_purge/tta_purge_modelnet.yaml --ckpts checkpoints/modelnet_src_only.pth --method tta_x --batch_size 16 --BN_reset
+python main.py --config cfgs/tta_purge/tta_purge_shapenet.yaml --ckpts checkpoints/shapenet_src_only.pth --method tta_x --batch_size 16 --BN_reset
+
+#-------------------------------------------------- Baselines------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # Prototype Pruning
 python main.py --config cfgs/tta_purge/tta_purge_scanobject.yaml --ckpts checkpoints/scan_object_src_only.pth --method prototype_purge --BN_reset

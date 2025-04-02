@@ -238,6 +238,13 @@ scanobjectnn_label_descriptions = {
 }
 
 
+dataset_label_descriptions = {
+    "shapenetcore": shapenetcore_label_descriptions,
+    "modelnet": modelnet_label_descriptions,
+    "scanobject": scanobjectnn_label_descriptions,
+}
+
+
 # Copied from CLIP repo
 imagenet_templates = [
     'a bad photo of a {}.',
