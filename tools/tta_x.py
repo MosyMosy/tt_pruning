@@ -27,7 +27,7 @@ def load_tta_dataset(args, config):
                 dataset=inference_dataset,
                 batch_size=args.batch_size,
                 shuffle=args.shuffle,
-                drop_last=True,
+                drop_last=False,
             )
         else:
             inference_dataset = tta_datasets.ModelNet40C(args, root)
@@ -35,7 +35,7 @@ def load_tta_dataset(args, config):
                 dataset=inference_dataset,
                 batch_size=args.batch_size,
                 shuffle=args.shuffle,
-                drop_last=True,
+                drop_last=False,
             )
 
     elif config.dataset.name == "scanobject":
@@ -44,7 +44,7 @@ def load_tta_dataset(args, config):
             inference_dataset,
             batch_size=args.batch_size,
             shuffle=args.shuffle,
-            drop_last=True,
+            drop_last=False,
         )
 
     elif config.dataset.name == "shapenetcore":
@@ -53,7 +53,7 @@ def load_tta_dataset(args, config):
             inference_dataset,
             batch_size=args.batch_size,
             shuffle=args.shuffle,
-            drop_last=True,
+            drop_last=False,
         )
 
     else:

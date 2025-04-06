@@ -3,8 +3,17 @@ from utils.logger import *
 from utils.config import *
 from tools.tta_purge import runner
 from tools.tta_BFTT3D import runner as runner_BFTT3D
-from tools.tta import tta_tent, tta_rotnet, tta_t3a, tta_shot, tta_dua, eval_source
+from tools.tta import (
+    tta_tent,
+    tta_rotnet,
+    tta_t3a,
+    tta_shot,
+    tta_dua,
+    eval_source,
+    eval_with_intermediate,
+)
 from tools.tta_x import runner as runner_x
+from tools.tta_token_mask import runner as runner_token_mask
 import time
 import os
 import torch
@@ -85,7 +94,7 @@ def main(args):
     # args.batch_size = 1
     # config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
     config.model.group_norm = args.group_norm
-    
+
     methods_dict = {
         "source_only": eval_source,
         "prototype_purge": runner,
@@ -97,6 +106,8 @@ def main(args):
         "shot": tta_shot,
         "dua": tta_dua,
         "tta_x": runner_x,
+        "tta_token_mask": runner_token_mask,
+        "with_intermediate": eval_with_intermediate,
     }
 
     args.split = "test"

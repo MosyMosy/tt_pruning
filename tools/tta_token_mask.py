@@ -98,109 +98,32 @@ def runner(args, config):
     source_model = load_base_model(args, config, logger)
     source_model.eval()
 
-    if args.method in ["prototype_purge"]:
-        clean_intermediates_path = (
-            f"intermediate_features/{dataset_name}_clean_intermediates.pth"
-        )
-        if os.path.exists(clean_intermediates_path):
-            clean_intermediates = torch.load(clean_intermediates_path)
-            clean_intermediates_mean, clean_intermediates_std = (
-                clean_intermediates["mean"],
-                clean_intermediates["std"],
-            )
-        else:
-            clean_intermediates_mean, clean_intermediates_std = (
-                generate_intermediate_embeddings(args, config, source_model)
-            )
-            torch.save(
-                {
-                    "mean": clean_intermediates_mean.cpu(),
-                    "std": clean_intermediates_std.cpu(),
-                },
-                clean_intermediates_path,
-            )
-        clean_intermediates_mean = clean_intermediates_mean.cuda()
-        clean_intermediates_std = clean_intermediates_std.cuda()
-
-    else:
-        clean_intermediates_mean, clean_intermediates_std = None, None
-
     resutl_file_path = os.path.join(
         "results_final_tta/",
         args.method,
         f"{args.exp_name}_{dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
     )
 
-    if args.method in [
-        "prototype_purge",
-        "cls_purge",
-    ]:
-        eval_purge(
-            args,
-            config,
-            logger,
-            source_model,
-            clean_intermediates_mean,
-            clean_intermediates_std,
-            resutl_file_path,
-        )
-
-    else:
-        raise NotImplementedError(f"Method {args.method} not implemented")
-
-
-def generate_intermediate_embeddings(args, config, source_model):
-    def update_stats(x, count, mean, M2):
-        count += 1
-        delta = x - mean
-        mean = mean + delta / count
-        delta2 = x - mean
-        M2 = M2 + delta * delta2
-        return count, mean, M2
-
-    def finalize_stats(count, mean, M2):
-        if count < 2:
-            # Not enough data points to compute variance
-            return mean, torch.full_like(M2, float("nan"))
-        variance = M2 / (count - 1)
-        std = torch.sqrt(variance)
-        return mean, std
-
-    clean_dataloader = load_clean_dataset(args, config)
-    count = 0
-    mean = torch.zeros(12, 384, dtype=float)
-    M2 = torch.zeros(12, 384, dtype=float)
-    for i, (_, _, data) in tqdm(
-        enumerate(clean_dataloader), total=len(clean_dataloader)
-    ):
-        points = data[0].cuda()
-        points = misc.fps(points, config.npoints)
-        with torch.no_grad():
-            intermediates = source_model.module.forward_out_intermediate(points)
-        intermediates = torch.stack(
-            intermediates, dim=0
-        )  # (num_layers, batch_size * tokens, emb_dim)
-
-        for i in range(intermediates.shape[1]):
-            x = intermediates[:, i, :]  # x has shape (L, C)
-            count, mean, M2 = update_stats(x, count, mean, M2)
-
-    return finalize_stats(count, mean, M2)
+    eval(
+        args,
+        config,
+        logger,
+        source_model,
+        resutl_file_path,
+    )
 
 
 @torch.jit.script
-def softmax_entropy(x: torch.Tensor, dim:int=-1) -> torch.Tensor:
+def softmax_entropy(x: torch.Tensor, dim: int = -1) -> torch.Tensor:
     """Entropy of softmax distribution from logits."""
     return -(x.softmax(dim) * x.log_softmax(dim)).sum(dim)
 
 
-def eval_purge(
+def eval(
     args,
     config,
     logger,
     source_model,
-    clean_intermediates_mean,
-    clean_intermediates_std,
     resutl_file_path,
 ):
     time_list = []
@@ -216,7 +139,9 @@ def eval_purge(
             # if corr_id not in [2]:
             #     continue
 
-            if "f_write" not in locals():  # for saving results for easy copying to google sheet
+            if (
+                "f_write" not in locals()
+            ):  # for saving results for easy copying to google sheet
                 f_write = get_writer_to_all_result(
                     args, config, custom_path=resutl_file_path
                 )
@@ -231,19 +156,38 @@ def eval_purge(
             test_pred = []
             test_label = []
             entropy_list = []
-            
-            
+
             base_model = load_base_model(args, config, logger, pretrained=False)
             base_model.load_state_dict(source_model.state_dict())
-            
+
             for idx, (data, labels) in enumerate(tta_loader):
                 # now inferring on this one sample
-                
+                a = iter(tta_loader)
+                data, labels = next(a)
                 # reset batchnorm running stats
-                
+
                 base_model.eval()
-                
-                
+
+                if data.shape[0] < args.batch_size:
+                    n_repeat = (args.batch_size + data.shape[0] - 1) // data.shape[
+                        0
+                    ]  # Ceiling division
+                    data = data.repeat(n_repeat, 1, 1)[: args.batch_size]
+
+                if labels.shape[0] < args.batch_size:
+                    n_repeat = (args.batch_size + labels.shape[0] - 1) // labels.shape[
+                        0
+                    ]
+                    labels = labels.repeat(n_repeat, 1)[: args.batch_size]
+
+                # if args.distributed:
+                #     data = dist_utils.scatter_tensor(data, args)
+                #     labels = dist_utils.scatter_tensor(labels, args)
+                # else:
+                #     data = data.cuda()
+                #     labels = labels.cuda()
+                # # data = data.cuda()
+
                 points = data.cuda()
                 labels = labels.cuda()
                 points = [
@@ -254,7 +198,6 @@ def eval_purge(
 
                 labels = [labels for _ in range(args.batch_size_tta)]
                 labels = torch.cat(labels, dim=0)
-                        
 
                 # reset batchnorm running stats
                 if args.BN_reset:
@@ -262,30 +205,14 @@ def eval_purge(
                         if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
                             m.running_mean = None  # for original implementation of tent
                             m.running_var = None  # for original implementation of tent
-                purge_sizes = args.purge_size_list
                 logits = []
-                for i in range(len(purge_sizes)):
-                    if args.method == "prototype_purge":
-                        with torch.no_grad():
-                            logits.append(
-                                base_model.module.forward_prototype_purge(
-                                    points,
-                                    source_stats=(
-                                        clean_intermediates_mean,
-                                        clean_intermediates_std,
-                                    ),
-                                    layer_idx=[0],
-                                    purge_size=purge_sizes[i],
-                                ).unsqueeze(1)
-                            )
-                    elif args.method == "cls_purge":
-                        with torch.no_grad():
-                            logits.append(
-                                base_model.module.forward_cls_purge(
-                                    points,
-                                    purge_size=purge_sizes[i],
-                                ).unsqueeze(1)
-                            )
+                with torch.no_grad():
+                    logits.append(
+                        base_model.module.forward_token_mask(
+                            points,
+                            entropy_threshold=args.entropy_threshold,
+                        ).unsqueeze(1)
+                    )
                 logits = torch.cat(logits, dim=1)
                 entropy = softmax_entropy(logits, dim=-1)
                 # entropy_list.append(entropy.mean().cpu())
@@ -353,7 +280,7 @@ def eval_purge(
                     )
                     + "\n"
                 )
-                
+
                 f_write.flush()
                 f_write.close()
 
@@ -361,4 +288,3 @@ def eval_purge(
                     f"Final Results Saved at:",
                     resutl_file_path,
                 )
-

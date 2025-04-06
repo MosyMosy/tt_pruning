@@ -137,7 +137,7 @@ def main(args, config, logger):
     # root = args.root
 
     TRAIN_DATASET = PartNormalDataset(root=config.root, npoints=config.npoint, split='trainval', normal_channel=config.normal)
-    trainDataLoader = DataLoader(TRAIN_DATASET, batch_size=config.batch_size, shuffle=True, num_workers=10, drop_last=True)
+    trainDataLoader = DataLoader(TRAIN_DATASET, batch_size=config.batch_size, shuffle=True, num_workers=10, drop_last=False)
     TEST_DATASET = PartNormalDataset(root=config.root, npoints=config.npoint, split='test', normal_channel=config.normal)
     testDataLoader = DataLoader(TEST_DATASET, batch_size=config.batch_size, shuffle=False, num_workers=10)
 

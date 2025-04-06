@@ -452,7 +452,7 @@ def eval_tta(args, config, test_source = True, train_writer=None):
         elif args.corruption in corruptions and not test_source and not args.corruption == 'clean':
 
             dataset = tta_datasets.ModelNet40C(args)
-            tta_loader = DataLoader(dataset=dataset, batch_size=32, drop_last=True)
+            tta_loader = DataLoader(dataset=dataset, batch_size=32, drop_last=False)
             optimizer = builder.build_opti_sche(base_model, config)[0]
             base_model.zero_grad()
             total_batches = len(tta_loader)

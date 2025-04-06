@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -19,6 +20,8 @@ from pytorch3d.ops import knn_points  # pytorch3d
 # from extensions.chamfer_dist import ChamferDistanceL1, ChamferDistanceL2
 from pytorch3d.loss import chamfer_distance  # pytorch3d
 from functools import partial
+
+entropy_list = []
 
 
 class ChamferDistanceL1(torch.nn.Module):  # pytorch3d
@@ -113,9 +116,7 @@ class Group(nn.Module):
         )  # idx_base  (8, 1, 1)
         idx = idx + idx_base  # for  batch 0 offset 0,   batch 1 ~7,  offset  1*2048
         idx = idx.view(-1)
-        neighborhood = xyz.view(
-            batch_size * num_points, -1
-        )[
+        neighborhood = xyz.view(batch_size * num_points, -1)[
             idx, :
         ]  # (8, 2048, 3) -> (8*2048, 3)   # todo sampling the neighborhoold points for each center in each batch
         neighborhood = neighborhood.view(
@@ -195,6 +196,60 @@ class Attention(nn.Module):
         x = self.proj_drop(x)
         return x
 
+    def forward_token_mask(self, x, entropy_threshold=0.5):
+        B, N, C = x.shape
+        qkv = (
+            self.qkv(x)
+            .reshape(B, N, 3, self.num_heads, C // self.num_heads)
+            .permute(2, 0, 3, 1, 4)
+        )
+        q, k, v = (
+            qkv[0],
+            qkv[1],
+            qkv[2],
+        )  # make torchscript happy (cannot use tensor as tuple)
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+
+        # Replace random noise to high entropy tokens
+        # first mask the diagonal of the attention matrix
+        H = attn.shape[1]  # number of heads
+        diag_mask = (
+            ~torch.eye(N, dtype=torch.bool, device=attn.device)
+            .unsqueeze(0)
+            .unsqueeze(0)
+            .expand(B, H, N, N)
+        )
+        attn_no_diag = attn  # .masked_select(diag_mask).view(B, H, N, N - 1)
+        attn_no_diag = attn_no_diag.softmax(dim=-1)
+        attn_entropy = -(attn_no_diag * attn_no_diag.clamp(min=1e-8).log()).sum(dim=-1)
+        # to make the entropy value between 0 and 1
+        attn_entropy = attn_entropy / math.log(N)
+        # entropy_list.append([attn_entropy[:,:,0].mean().cpu().detach(), attn_entropy[:,:,1:].mean().cpu().detach()])
+        attn_entropy = attn_entropy.mean(dim=1)  # B N mean over the head dimension
+        high_entropy_mask = attn_entropy > entropy_threshold  # shape: (B, N)
+        # cls_token is always low entropy
+        high_entropy_mask[:, 0] = False  # cls token
+        high_entropy_mask = high_entropy_mask.unsqueeze(-1)  # (B, N, 1)
+
+        # the rest of the attention layer
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+
+        return x, high_entropy_mask
+
+    def forward_no_attn(self, x):
+        B, N, C = x.shape
+        x_v = (self.qkv(x).reshape(B, N, 3, C))[:, :, 2, :]
+
+        x_v = self.proj(x_v)
+        x_v = self.proj_drop(x_v)
+        return x_v
+
 
 class Block(nn.Module):
     def __init__(
@@ -235,6 +290,21 @@ class Block(nn.Module):
 
     def forward(self, x):
         x = x + self.drop_path(self.attn(self.norm1(x)))
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        return x
+
+    def forward_token_mask(self, x, entropy_threshold=0.5):
+        x_, entropy_mask = self.attn.forward_token_mask(
+            self.norm1(x),
+            entropy_threshold=entropy_threshold,
+        )
+
+        x = x + self.drop_path(x_)
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        return x, entropy_mask
+
+    def forward_no_attn(self, x):
+        x = x + self.drop_path(self.attn.forward_no_attn(self.norm1(x)))
         x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x
 
@@ -344,7 +414,9 @@ class TransformerEncoder(nn.Module):
                 # z_score = (x_distance - x_distance.mean()) / x_distance.std()
                 threshold_max = misc.best_threshold_model(x_distance)
                 x_mask_max = x_distance <= max(threshold_max, x_distance.min() + 2)
-                to_mask_count = purge_size  # (~x_mask_max).sum(dim=-1).float().mean().int()
+                to_mask_count = (
+                    purge_size  # (~x_mask_max).sum(dim=-1).float().mean().int()
+                )
                 to_keep_indices = x_distance.argsort(dim=-1)[:, : N - 1 - to_mask_count]
                 to_keep_indices = to_keep_indices.sort(dim=-1)[0]
                 to_keep_indices = to_keep_indices.unsqueeze(-1).expand(-1, -1, C)
@@ -358,7 +430,7 @@ class TransformerEncoder(nn.Module):
             x = block(x + pos)
         return x
 
-    def forward_cls_purge(self, x, pos,  purge_size=16):
+    def forward_cls_purge(self, x, pos, purge_size=16):
         for i, block in enumerate(self.blocks):
             if i in [0]:
                 B, N, C = x.shape
@@ -395,6 +467,39 @@ class TransformerEncoder(nn.Module):
                 pos = torch.cat([pos[:, 0:1], masked_pose], dim=1)
 
             x = block(x + pos)
+
+        return x
+
+    def forward_token_mask(self, x, pos, entropy_threshold=0.5):
+        entropy_mask = None
+        for i, block in enumerate(self.blocks):
+            if i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]:
+                x = x + pos
+                if entropy_mask is not None:
+                    # Add random noise to high entropy tokens
+                    noise = torch.randn_like(x)
+                    x = torch.where(entropy_mask, noise, x)  # (B, N, C)
+
+                x, entropy_mask = block.forward_token_mask(
+                    x,
+                    entropy_threshold=entropy_threshold,
+                )
+            else:
+                x = block(x + pos)
+
+        return x, entropy_mask
+
+    def forward_intermediate(self, x, pos):
+        intermediate = []
+        for i, block in enumerate(self.blocks):
+            x = block(x + pos)
+            intermediate.append([i + 1, x])
+        return x, intermediate
+
+    def forward_no_attn(self, x, layer_list):
+        for i in layer_list:
+            if i in layer_list:
+                x = self.blocks[i].forward_no_attn(x)
 
         return x
 
@@ -471,21 +576,25 @@ class PointTransformer(nn.Module):
             base_ckpt = {
                 k.replace("module.", ""): v for k, v in ckpt["base_model"].items()
             }
-            
+
             base_ckpt = {
                 k.replace("class_head.8.custom_last_layer_name", "class_head.8"): v
                 for k, v in base_ckpt.items()
             }
-            
+
             # delete the cls head in case it had a different number of classes
             to_delete_prefix = "class_head.8"
             # Check if the key exists and its shape meets the condition
             if f"{to_delete_prefix}.weight" in base_ckpt:
                 shape = base_ckpt[f"{to_delete_prefix}.weight"].shape  # Get the shape
                 # Replace `x` with the shape condition you want to check
-                if shape[0] != self.cls_dim:  
+                if shape[0] != self.cls_dim:
                     # Delete all keys that start with "class_head.8"
-                    keys_to_delete = [k for k in list(base_ckpt.keys()) if k.startswith(to_delete_prefix)]
+                    keys_to_delete = [
+                        k
+                        for k in list(base_ckpt.keys())
+                        if k.startswith(to_delete_prefix)
+                    ]
                     for k in keys_to_delete:
                         del base_ckpt[k]
 
@@ -620,6 +729,58 @@ class PointTransformer(nn.Module):
         # transformer
         x = self.blocks.forward_cls_purge(x, pos, purge_size=purge_size)
         x = self.norm(x)
+        concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
+        ret = self.class_head(concat_f)
+
+        return ret
+
+    def forward_token_mask(self, pts, entropy_threshold=0.5):
+        neighborhood, center = self.group_divider(pts)
+        group_input_tokens = self.encoder(neighborhood)  # B G N
+        cls_tokens = self.cls_token.expand(group_input_tokens.size(0), -1, -1)
+        cls_pos = self.cls_pos.expand(group_input_tokens.size(0), -1, -1)
+
+        pos = self.pos_embed(center)
+
+        x = torch.cat((cls_tokens, group_input_tokens), dim=1)
+        pos = torch.cat((cls_pos, pos), dim=1)
+        # transformer
+
+        x, entropy_mask = self.blocks.forward_token_mask(
+            x, pos, entropy_threshold=entropy_threshold
+        )
+        x = self.norm(x)
+        x = x * (entropy_mask * (-1e6) + 1)
+        concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
+        ret = self.class_head(concat_f)
+
+        # entropy_list = torch.FloatTensor(entropy_list)
+        return ret
+
+    def forward_intermediate(self, pts, layer_idx=-1):
+        neighborhood, center = self.group_divider(pts)
+        group_input_tokens = self.encoder(neighborhood)  # B G N
+        cls_tokens = self.cls_token.expand(group_input_tokens.size(0), -1, -1)
+        cls_pos = self.cls_pos.expand(group_input_tokens.size(0), -1, -1)
+
+        pos = self.pos_embed(center)
+
+        x = torch.cat((cls_tokens, group_input_tokens), dim=1)
+        pos = torch.cat((cls_pos, pos), dim=1)
+        # transformer
+        x, intermediates = self.blocks.forward_intermediate(x, pos)
+        projected_intermediates = []
+        for inte in intermediates:
+            projected_intermediates.append(
+                self.blocks.forward_no_attn(
+                    inte[1], layer_list=range(inte[0], self.depth)
+                )
+            )
+        del intermediates
+        projected_intermediates = torch.stack(projected_intermediates, dim=0)
+        projected_intermediates = self.norm(projected_intermediates)
+
+        x = projected_intermediates[layer_idx]
         concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
         ret = self.class_head(concat_f)
 

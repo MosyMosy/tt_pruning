@@ -9,7 +9,7 @@ def get_args():
     parser.add_argument("--alpha", type=float, default=0.0)
     parser.add_argument("--batch_size_tta", type=int, default=1)
     parser.add_argument("--stride_step", type=int, default=1)
-    parser.add_argument("--batch_size", type=int, default=2)
+    parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--grad_steps", type=int, default=0)
     parser.add_argument(
         "--disable_bn_adaptation",
@@ -166,13 +166,13 @@ def get_args():
         default=False,
         help="training modelnet from scratch",
     )
-    
+
     parser.add_argument(
         "--BN_reset",
         action="store_true",
         help="Reset batch norm running statistics similar to TENT",
     )
-    
+
     parser.add_argument(
         "--mode",
         choices=["easy", "median", "hard", None],
@@ -197,25 +197,41 @@ def get_args():
             "shot",
             "dua",
             "tta_x",
+            "tta_token_mask",
+            "with_intermediate"
         ],
-        default="tta_x",
+        default="with_intermediate",
+    )
+
+    parser.add_argument(
+        "--purge_size_list", nargs="*", type=int, default=[0, 2, 4, 8, 16, 32]
+    )
+    parser.add_argument(
+        "--entropy_threshold",
+        type=float,
+        default=100000,
+        help="entropy threshold for tta token mask",
     )
     
-    parser.add_argument("--purge_size_list", nargs="*", type=int, default=[0, 2, 4, 8, 16, 32])
-
+    parser.add_argument(
+        "--layer_idx",
+        type=int,
+        default=11,
+        help="layer index for with_intermediate",
+    )
 
     # parser.add_argument("--LR", type=float, default=1e-5)
-    parser.add_argument('--LR', type=float, default= 0.005)
+    parser.add_argument("--LR", type=float, default=0.005)
     parser.add_argument("--BETA", type=float, default=0.9)
     parser.add_argument("--WD", type=float, default=0.5)
-    
+
     parser.add_argument("--bftt3d_stages", type=int, default=3)
     parser.add_argument("--bftt3d_dim", type=int, default=72)
     parser.add_argument("--bftt3d_k", type=int, default=120)
     parser.add_argument("--bftt3d_alpha", type=int, default=1000)
     parser.add_argument("--bftt3d_beta", type=int, default=100)
     parser.add_argument("--bftt3d_gamma", type=int, default=205)
-    
+
     parser.add_argument("--t3a_filter_k", type=int, default=-1)
 
     args = parser.parse_args()

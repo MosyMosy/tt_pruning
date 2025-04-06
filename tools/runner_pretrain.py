@@ -264,7 +264,7 @@ def run_net(args, config, train_writer=None, val_writer=None):
         train_dataset = PartNormalDataset(root=config.root, npoints=config.npoint, split='trainval',
                                           normal_channel=config.normal, debug=args.debug)
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=50,
-                                  drop_last=True)
+                                  drop_last=False)
         test_dataset = PartNormalDataset(root=config.root, npoints=config.npoint, split='test',
                                          normal_channel=config.normal, debug=args.debug)
         test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=10)

@@ -25,7 +25,7 @@ def load_tta_dataset(args, config):
                 dataset=inference_dataset,
                 batch_size=args.batch_size,
                 shuffle=args.shuffle,
-                drop_last=True,
+                drop_last=False,
             )
         else:
             inference_dataset = tta_datasets.ModelNet40C(args, root)
@@ -33,7 +33,7 @@ def load_tta_dataset(args, config):
                 dataset=inference_dataset,
                 batch_size=args.batch_size,
                 shuffle=args.shuffle,
-                drop_last=True,
+                drop_last=False,
             )
 
     elif config.dataset.name == "scanobject":
@@ -42,7 +42,7 @@ def load_tta_dataset(args, config):
             inference_dataset,
             batch_size=args.batch_size,
             shuffle=args.shuffle,
-            drop_last=True,
+            drop_last=False,
         )
 
     elif config.dataset.name == "shapenetcore":
@@ -51,7 +51,7 @@ def load_tta_dataset(args, config):
             inference_dataset,
             batch_size=args.batch_size,
             shuffle=args.shuffle,
-            drop_last=True,
+            drop_last=False,
         )
 
     else:
@@ -209,6 +209,132 @@ def eval_source(args, config):
                     f_write.flush()
                     f_write.close()
                     print(f"Final Results Saved at:", resutl_file_path)
+
+def eval_with_intermediate(args, config):
+    dataset_name = config.dataset.name
+    resutl_file_path = os.path.join(
+        "results_final_tta/",
+        args.method,
+        f"{dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
+    )
+    # config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
+    config.model.group_norm = args.group_norm
+    npoints = config.npoints
+    logger = get_logger(args.log_name)
+
+    if dataset_name == "modelnet":
+        config.model.cls_dim = 40
+    elif dataset_name == "scanobject":  # for with background
+        config.model.cls_dim = 15
+    elif dataset_name == "scanobject_nbg":  # for no background
+        config.model.cls_dim = 15
+    elif dataset_name == "partnet":
+        config.model.cls_dim = 16
+    elif dataset_name == "shapenetcore":
+        config.model.cls_dim = 55
+    else:
+        raise NotImplementedError
+
+    time_list = []
+    for args.severity in level:
+        for corr_id, args.corruption in enumerate(corruptions):
+            start_time = time.time()
+            if corr_id == 0:
+                f_write = get_writer_to_all_result(
+                    args, config, custom_path=resutl_file_path
+                )  # for saving results for easy copying to google sheet
+                f_write.write(f"All Corruptions: {corruptions}" + "\n\n")
+                f_write.write(
+                    f"Source Only Results for Dataset: {dataset_name}" + "\n\n"
+                )
+                f_write.write(f"Check Point: {args.ckpts}" + "\n\n")
+
+            base_model = load_base_model(args, config, logger)
+            print("Testing Source Performance...")
+            test_pred = []
+            test_label = []
+            base_model.eval()
+
+            if args.BN_reset:
+                for m in base_model.modules():
+                    if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
+                        m.running_mean = None  # for original implementation of tent
+                        m.running_var = None  # for original implementation of tent
+
+            inference_loader = load_tta_dataset(args, config)
+
+            with torch.no_grad():
+                for idx_inference, (data, labels) in enumerate(inference_loader):
+                    if dataset_name == "modelnet":
+                        points = data.cuda()
+                        points = misc.fps(points, npoints)
+                        label = labels.cuda()
+                    elif dataset_name in [
+                        "scanobject",
+                        "scanobject_wbg",
+                        "scanobject_nbg",
+                    ]:
+                        points = data.cuda()
+                        points = misc.fps(points, npoints)
+                        label = labels.cuda()
+                    elif dataset_name == "partnet":
+                        points = data.cuda()
+                        label = labels.cuda()
+                    elif dataset_name == "shapenetcore":
+                        points = data.cuda()
+                        points = misc.fps(points, npoints)
+                        label = labels.cuda()
+
+                    points = points.cuda()
+                    labels = label.cuda()
+                    logits = base_model.module.forward_intermediate(points, args.layer_idx)
+                    target = labels.view(-1)
+                    pred = logits.argmax(-1).view(-1)
+
+                    test_pred.append(pred.detach())
+                    test_label.append(target.detach())
+
+                test_pred = torch.cat(test_pred, dim=0)
+                test_label = torch.cat(test_label, dim=0)
+
+                if args.distributed:
+                    test_pred = dist_utils.gather_tensor(test_pred, args)
+                    test_label = dist_utils.gather_tensor(test_label, args)
+
+                acc = (
+                    (test_pred == test_label).sum() / float(test_label.size(0)) * 100.0
+                )
+                end_time = time.time()
+                time_list.append(end_time - start_time)
+                print(
+                    f"Source Peformance ::: Corruption ::: {args.corruption} ::: {acc}"
+                )
+
+                f_write.write(
+                    " ".join([str(round(float(xx), 3)) for xx in [acc]]) + "\n"
+                )
+                f_write.flush()
+
+                if corr_id == len(corruptions) - 1:
+                    f_write.write(
+                        " ".join(
+                            [
+                                str(round(float(xx), 3))
+                                for xx in [
+                                    min(time_list),
+                                    max(time_list),
+                                    sum(time_list) / len(time_list),
+                                    np.var(time_list),
+                                ]
+                            ]
+                        )
+                        + "\n"
+                    )
+
+                    f_write.flush()
+                    f_write.close()
+                    print(f"Final Results Saved at:", resutl_file_path)
+
 
 
 def eval_source_rotnet(args, config):
@@ -1147,7 +1273,9 @@ def tta_partseg(args, config, train_writer=None):
                     input_points = torch.squeeze(torch.vstack(input_points))
                     loss = base_model(
                         input_points, to_categorical(label, num_classes), tta=True
-                    )[0]  # only take recon loss
+                    )[
+                        0
+                    ]  # only take recon loss
                     loss = loss.mean()
                     loss.backward()
                     optimizer.step()
@@ -1323,7 +1451,9 @@ def tta_shapenet(args, config, train_writer=None):
                     input_points = torch.squeeze(torch.vstack(input_points))
                     loss = base_model(
                         input_points, to_categorical(label, num_classes), tta=True
-                    )[0]  # only take recon loss
+                    )[
+                        0
+                    ]  # only take recon loss
                     loss = loss.mean()
                     loss.backward()
                     optimizer.step()
