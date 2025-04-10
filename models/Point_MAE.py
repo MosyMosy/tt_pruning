@@ -346,13 +346,9 @@ class TransformerEncoder(nn.Module):
         )
 
     def forward(self, x, pos):
-        feature_list = []
-        fetch_idx = [3, 7, 11]
         for i, block in enumerate(self.blocks):
             x = block(x + pos)
-            if i in fetch_idx:
-                feature_list.append(x)
-        return x, feature_list
+        return x, None
 
     def forward_out_intermediate(self, x, pos):
         intermediates = []
@@ -398,7 +394,7 @@ class TransformerEncoder(nn.Module):
 
     def forward_prototype_purge(self, x, pos, source_stats, layer_idx, purge_size=16):
         for i, block in enumerate(self.blocks):
-            if i in layer_idx:
+            if i in [1]:
                 B, N, C = x.shape
                 source_mean = source_stats[0][i][None, None, :].to(x.dtype)
                 source_std = source_stats[1][i][None, None, :].to(x.dtype)
@@ -432,7 +428,7 @@ class TransformerEncoder(nn.Module):
 
     def forward_cls_purge(self, x, pos, purge_size=16):
         for i, block in enumerate(self.blocks):
-            if i in [0]:
+            if i in [1]:
                 B, N, C = x.shape
                 cls_token = x[:, 0:1]
                 pos_cls = pos[:, 0:1]
@@ -473,17 +469,37 @@ class TransformerEncoder(nn.Module):
     def forward_token_mask(self, x, pos, entropy_threshold=0.5):
         entropy_mask = None
         for i, block in enumerate(self.blocks):
-            if i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]:
-                x = x + pos
-                if entropy_mask is not None:
-                    # Add random noise to high entropy tokens
-                    noise = torch.randn_like(x)
-                    x = torch.where(entropy_mask, noise, x)  # (B, N, C)
+            if i in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]:
+                B, N, C = x.shape
 
-                x, entropy_mask = block.forward_token_mask(
-                    x,
-                    entropy_threshold=entropy_threshold,
+                qkv = (
+                    block.attn.qkv(block.norm1(x + pos))
+                    .reshape(B, N, 3, 6, C // 6)
+                    .permute(2, 0, 3, 1, 4)
                 )
+                q, k, v = (
+                    qkv[0],
+                    qkv[1],
+                    qkv[2],
+                )  # make torchscript happy (cannot use tensor as tuple)
+
+                attn = (q @ k.transpose(-2, -1)) * 64**-0.5
+                attn = attn.softmax(dim=-1)
+                attn_entropy = -(attn * attn.clamp(min=1e-8).log()).sum(dim=-1)
+                # to make the entropy value between 0 and 1
+                attn_entropy = attn_entropy / math.log(N)
+                attn_entropy = attn_entropy.mean(dim=1)
+
+                attn_entropy[:, 0] = 0
+
+                # Add random noise to high entropy tokens
+                entropy_mask = (attn_entropy > entropy_threshold).unsqueeze(
+                    -1
+                )  # shape: (B, N)
+                noise = torch.randn_like(x)
+                x = torch.where(entropy_mask, noise, x + pos)  # (B, N, C)
+                
+                x = block(x)
             else:
                 x = block(x + pos)
 
@@ -496,11 +512,22 @@ class TransformerEncoder(nn.Module):
             intermediate.append([i + 1, x])
         return x, intermediate
 
-    def forward_no_attn(self, x, layer_list):
+    def forward_no_attn(self, x, pos, layer_list):
         for i in layer_list:
             if i in layer_list:
-                x = self.blocks[i].forward_no_attn(x)
+                x = self.blocks[i].forward_no_attn(x + pos)
 
+        return x
+
+    def forward_layer_prune(self, x, pos, layer_list, purne_attention=False):
+        for i, block in enumerate(self.blocks):
+            if i in layer_list:
+                if purne_attention:
+                    x = block.forward_no_attn(x + pos)
+                else:
+                    continue
+            else:
+                x = block(x + pos)
         return x
 
 
@@ -750,12 +777,45 @@ class PointTransformer(nn.Module):
             x, pos, entropy_threshold=entropy_threshold
         )
         x = self.norm(x)
-        x = x * (entropy_mask * (-1e6) + 1)
+        # x = x * (entropy_mask * (-1e6) + 1)
         concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
         ret = self.class_head(concat_f)
 
         # entropy_list = torch.FloatTensor(entropy_list)
         return ret
+
+    def forward_intermediate_dual(self, pts):
+        neighborhood, center = self.group_divider(pts)
+        group_input_tokens = self.encoder(neighborhood)  # B G N
+        cls_tokens = self.cls_token.expand(group_input_tokens.size(0), -1, -1)
+        cls_pos = self.cls_pos.expand(group_input_tokens.size(0), -1, -1)
+
+        pos = self.pos_embed(center)
+
+        x = torch.cat((cls_tokens, group_input_tokens), dim=1)
+        pos = torch.cat((cls_pos, pos), dim=1)
+        # transformer
+        x, intermediates = self.blocks.forward_intermediate(x, pos)
+        projected_intermediates = []
+        for inte in intermediates:
+            projected_intermediates.append(
+                self.blocks.forward_no_attn(
+                    inte[1], pos, layer_list=range(inte[0], self.depth)
+                )
+            )
+        del intermediates
+        projected_intermediates = torch.stack(projected_intermediates, dim=0)
+        projected_intermediates = self.norm(projected_intermediates)
+
+        x = projected_intermediates[-1]
+        mean = projected_intermediates.mean(dim=0)
+
+        concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
+        concat_mean = torch.cat([mean[:, 0], mean[:, 1:].max(1)[0]], dim=-1)
+        ret = self.class_head(concat_f)
+        ret_mean = self.class_head(concat_mean)
+
+        return ret, ret_mean
 
     def forward_intermediate(self, pts, layer_idx=-1):
         neighborhood, center = self.group_divider(pts)
@@ -773,17 +833,65 @@ class PointTransformer(nn.Module):
         for inte in intermediates:
             projected_intermediates.append(
                 self.blocks.forward_no_attn(
-                    inte[1], layer_list=range(inte[0], self.depth)
+                    inte[1], pos, layer_list=range(inte[0], self.depth)
                 )
             )
         del intermediates
         projected_intermediates = torch.stack(projected_intermediates, dim=0)
         projected_intermediates = self.norm(projected_intermediates)
 
+        # --------------------- average_0_11 -------------------
+        # x = (projected_intermediates[0] + projected_intermediates[-1]) / 2
+        # x = projected_intermediates.mean(dim=0)
+        # x = projected_intermediates[-1] - projected_intermediates.min(dim=0)[0]
         x = projected_intermediates[layer_idx]
+
         concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
         ret = self.class_head(concat_f)
 
+        # --------------------- averag_0-11_logit -------------------
+        # x = projected_intermediates
+        # x = torch.cat([x[0:1], x[-2:-1]], dim=0)
+        # L, B, N, C = x.shape
+        # x = x.view(L * B, N, C)
+        # concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
+        # ret = self.class_head(concat_f)
+        # ret = ret.view(L, B, -1)
+        # ret = ret.mean(dim=0)
+        return ret
+
+    def forward_headless(self, pts):
+        neighborhood, center = self.group_divider(pts)
+        group_input_tokens = self.encoder(neighborhood)  # B G N
+        cls_tokens = self.cls_token.expand(group_input_tokens.size(0), -1, -1)
+        cls_pos = self.cls_pos.expand(group_input_tokens.size(0), -1, -1)
+
+        pos = self.pos_embed(center)
+
+        x = torch.cat((cls_tokens, group_input_tokens), dim=1)
+        pos = torch.cat((cls_pos, pos), dim=1)
+        # transformer
+        x = self.blocks(x, pos)[0]
+        x = self.norm(x)
+        concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
+        # ret = self.class_head(concat_f)
+        return concat_f
+
+    def forward_layer_prune(self, pts, layer_list, purne_attention=False):
+        neighborhood, center = self.group_divider(pts)
+        group_input_tokens = self.encoder(neighborhood)  # B G N
+        cls_tokens = self.cls_token.expand(group_input_tokens.size(0), -1, -1)
+        cls_pos = self.cls_pos.expand(group_input_tokens.size(0), -1, -1)
+
+        pos = self.pos_embed(center)
+
+        x = torch.cat((cls_tokens, group_input_tokens), dim=1)
+        pos = torch.cat((cls_pos, pos), dim=1)
+        # transformer
+        x = self.blocks.forward_layer_prune(x, pos, layer_list, purne_attention)
+        x = self.norm(x)
+        concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
+        ret = self.class_head(concat_f)
         return ret
 
 

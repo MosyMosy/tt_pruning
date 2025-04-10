@@ -10,6 +10,8 @@ from utils.rotnet_utils import rotate_batch
 import utils.tent_shot as tent_shot_utils
 import utils.t3a as t3a_utils
 from utils.misc import *
+import copy
+
 
 level = [5]
 
@@ -84,6 +86,368 @@ def load_base_model(args, config, logger, load_part_seg=False):
 
 
 def eval_source(args, config):
+
+    dataset_name = config.dataset.name
+    resutl_file_path = os.path.join(
+        "results_final_tta/",
+        args.method,
+        f"{dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
+    )
+    # config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
+    config.model.group_norm = args.group_norm
+    npoints = config.npoints
+    logger = get_logger(args.log_name)
+
+    if dataset_name == "modelnet":
+        config.model.cls_dim = 40
+    elif dataset_name == "scanobject":  # for with background
+        config.model.cls_dim = 15
+    elif dataset_name == "scanobject_nbg":  # for no background
+        config.model.cls_dim = 15
+    elif dataset_name == "partnet":
+        config.model.cls_dim = 16
+    elif dataset_name == "shapenetcore":
+        config.model.cls_dim = 55
+    else:
+        raise NotImplementedError
+
+    time_list = []
+    for args.severity in level:
+        for corr_id, args.corruption in enumerate(corruptions):
+            start_time = time.time()
+            if corr_id == 0:
+                f_write = get_writer_to_all_result(
+                    args, config, custom_path=resutl_file_path
+                )  # for saving results for easy copying to google sheet
+                f_write.write(f"All Corruptions: {corruptions}" + "\n\n")
+                f_write.write(
+                    f"Source Only Results for Dataset: {dataset_name}" + "\n\n"
+                )
+                f_write.write(f"Check Point: {args.ckpts}" + "\n\n")
+
+            base_model = load_base_model(args, config, logger)
+            print("Testing Source Performance...")
+            test_pred = []
+            test_label = []
+
+            base_model.eval()
+
+            if args.BN_reset:
+                for m in base_model.modules():
+                    if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
+                        m.running_mean = None  # for original implementation of tent
+                        m.running_var = None  # for original implementation of tent
+
+            inference_loader = load_tta_dataset(args, config)
+
+            with torch.no_grad():
+                for idx_inference, (data, labels) in enumerate(inference_loader):
+                    if dataset_name == "modelnet":
+                        points = data.cuda()
+                        points = misc.fps(points, npoints)
+                        label = labels.cuda()
+                    elif dataset_name in [
+                        "scanobject",
+                        "scanobject_wbg",
+                        "scanobject_nbg",
+                    ]:
+                        points = data.cuda()
+                        points = misc.fps(points, npoints)
+                        label = labels.cuda()
+                    elif dataset_name == "partnet":
+                        points = data.cuda()
+                        label = labels.cuda()
+                    elif dataset_name == "shapenetcore":
+                        points = data.cuda()
+                        points = misc.fps(points, npoints)
+                        label = labels.cuda()
+
+                    points = points.cuda()
+                    labels = label.cuda()
+                    if hasattr(base_model.module, "classification_only"):
+                        logits = base_model.module.classification_only(
+                            points, only_unmasked=False
+                        )
+                    else:
+                        logits = base_model(
+                            points,
+                        )
+
+                    target = labels.view(-1)
+                    pred = logits.argmax(-1).view(-1)
+
+                    test_pred.append(pred.detach())
+                    test_label.append(target.detach())
+
+                test_pred = torch.cat(test_pred, dim=0)
+                test_label = torch.cat(test_label, dim=0)
+
+                if args.distributed:
+                    test_pred = dist_utils.gather_tensor(test_pred, args)
+                    test_label = dist_utils.gather_tensor(test_label, args)
+
+                acc = (
+                    (test_pred == test_label).sum() / float(test_label.size(0)) * 100.0
+                )
+                end_time = time.time()
+                time_list.append(end_time - start_time)
+                print(
+                    f"Source Peformance ::: Corruption ::: {args.corruption} ::: {acc}"
+                )
+
+                f_write.write(
+                    " ".join([str(round(float(xx), 3)) for xx in [acc]]) + "\n"
+                )
+                f_write.flush()
+
+                if corr_id == len(corruptions) - 1:
+                    f_write.write(
+                        " ".join(
+                            [
+                                str(round(float(xx), 3))
+                                for xx in [
+                                    min(time_list),
+                                    max(time_list),
+                                    sum(time_list) / len(time_list),
+                                    np.var(time_list),
+                                ]
+                            ]
+                        )
+                        + "\n"
+                    )
+
+                    f_write.flush()
+                    f_write.close()
+                    print(f"Final Results Saved at:", resutl_file_path)
+
+
+def eval_source_layer_average(args, config):
+
+    def average_last_n_blocks_with_previous(model, n=2, m=1):
+        blocks = model.module.blocks.blocks
+        num_blocks = len(blocks)
+
+        if n > num_blocks - 1:
+            raise ValueError("n is too large. You need at least n previous layers.")
+        if m < 1:
+            raise ValueError("m must be >= 1")
+
+        # Clone original blocks
+        original_blocks = [copy.deepcopy(blocks[i]) for i in range(num_blocks)]
+
+        # Average the last n blocks
+        for i in range(num_blocks - 1, num_blocks - n - 1, -1):
+            if i - m < 0:
+                raise ValueError(
+                    f"Not enough previous blocks to average block {i} with {m} previous blocks."
+                )
+
+            param_blocks = original_blocks[i - m : i + 1]  # blocks to average
+
+            # Averaging parameters by name
+            for name, param in blocks[i].named_parameters():
+                with torch.no_grad():
+                    avg = sum(
+                        dict(b.named_parameters())[name].data for b in param_blocks
+                    ) / (m + 1)
+                    param.data.copy_(avg)
+
+            # Averaging buffers (e.g. running_mean, running_var if any)
+            for name, buf in blocks[i].named_buffers():
+                with torch.no_grad():
+                    avg = sum(
+                        dict(b.named_buffers())[name].data for b in param_blocks
+                    ) / (m + 1)
+                    buf.data.copy_(avg)
+
+        return model
+
+    dataset_name = config.dataset.name
+    resutl_file_path = os.path.join(
+        "results_final_tta/",
+        args.method,
+        f"{dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
+    )
+    # config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
+    config.model.group_norm = args.group_norm
+    npoints = config.npoints
+    logger = get_logger(args.log_name)
+
+    if dataset_name == "modelnet":
+        config.model.cls_dim = 40
+    elif dataset_name == "scanobject":  # for with background
+        config.model.cls_dim = 15
+    elif dataset_name == "scanobject_nbg":  # for no background
+        config.model.cls_dim = 15
+    elif dataset_name == "partnet":
+        config.model.cls_dim = 16
+    elif dataset_name == "shapenetcore":
+        config.model.cls_dim = 55
+    else:
+        raise NotImplementedError
+
+    time_list = []
+    for args.severity in level:
+        for corr_id, args.corruption in enumerate(corruptions):
+            start_time = time.time()
+            if corr_id == 0:
+                f_write = get_writer_to_all_result(
+                    args, config, custom_path=resutl_file_path
+                )  # for saving results for easy copying to google sheet
+                f_write.write(f"All Corruptions: {corruptions}" + "\n\n")
+                f_write.write(
+                    f"Source Only Results for Dataset: {dataset_name}" + "\n\n"
+                )
+                f_write.write(f"Check Point: {args.ckpts}" + "\n\n")
+
+            base_model = load_base_model(args, config, logger)
+            print("Testing Source Performance...")
+            test_pred = []
+            test_label = []
+            base_model.eval()
+
+            if args.BN_reset:
+                for m in base_model.modules():
+                    if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
+                        m.running_mean = None  # for original implementation of tent
+                        m.running_var = None  # for original implementation of tent
+
+            base_model = average_last_n_blocks_with_previous(base_model, n=1, m=1)
+
+            inference_loader = load_tta_dataset(args, config)
+
+            with torch.no_grad():
+                for idx_inference, (data, labels) in enumerate(inference_loader):
+                    if dataset_name == "modelnet":
+                        points = data.cuda()
+                        points = misc.fps(points, npoints)
+                        label = labels.cuda()
+                    elif dataset_name in [
+                        "scanobject",
+                        "scanobject_wbg",
+                        "scanobject_nbg",
+                    ]:
+                        points = data.cuda()
+                        points = misc.fps(points, npoints)
+                        label = labels.cuda()
+                    elif dataset_name == "partnet":
+                        points = data.cuda()
+                        label = labels.cuda()
+                    elif dataset_name == "shapenetcore":
+                        points = data.cuda()
+                        points = misc.fps(points, npoints)
+                        label = labels.cuda()
+
+                    points = points.cuda()
+                    labels = label.cuda()
+                    if hasattr(base_model.module, "classification_only"):
+                        logits = base_model.module.classification_only(
+                            points, only_unmasked=False
+                        )
+                    else:
+                        logits = base_model(
+                            points,
+                        )
+
+                    target = labels.view(-1)
+                    pred = logits.argmax(-1).view(-1)
+
+                    test_pred.append(pred.detach())
+                    test_label.append(target.detach())
+
+                test_pred = torch.cat(test_pred, dim=0)
+                test_label = torch.cat(test_label, dim=0)
+
+                if args.distributed:
+                    test_pred = dist_utils.gather_tensor(test_pred, args)
+                    test_label = dist_utils.gather_tensor(test_label, args)
+
+                acc = (
+                    (test_pred == test_label).sum() / float(test_label.size(0)) * 100.0
+                )
+                end_time = time.time()
+                time_list.append(end_time - start_time)
+                print(
+                    f"Source Peformance ::: Corruption ::: {args.corruption} ::: {acc}"
+                )
+
+                f_write.write(
+                    " ".join([str(round(float(xx), 3)) for xx in [acc]]) + "\n"
+                )
+                f_write.flush()
+
+                if corr_id == len(corruptions) - 1:
+                    f_write.write(
+                        " ".join(
+                            [
+                                str(round(float(xx), 3))
+                                for xx in [
+                                    min(time_list),
+                                    max(time_list),
+                                    sum(time_list) / len(time_list),
+                                    np.var(time_list),
+                                ]
+                            ]
+                        )
+                        + "\n"
+                    )
+
+                    f_write.flush()
+                    f_write.close()
+                    print(f"Final Results Saved at:", resutl_file_path)
+
+
+def eval_source_all_BN(args, config):
+    class TokenWiseBatchNorm(nn.Module):
+        def __init__(self, num_tokens, feature_dim, eps=1e-5, affine=True):
+            super().__init__()
+            self.num_tokens = num_tokens
+            self.feature_dim = feature_dim
+            self.eps = eps
+            self.affine = affine
+            if affine:
+                self.weight = nn.Parameter(
+                    torch.ones(num_tokens, feature_dim)
+                )  # One per token
+                self.bias = nn.Parameter(torch.zeros(num_tokens, feature_dim))
+            else:
+                self.register_parameter("weight", None)
+                self.register_parameter("bias", None)
+
+        def forward(self, x):
+            # x: (B, N, D)
+            B, N, D = x.shape
+            assert N == self.num_tokens and D == self.feature_dim
+
+            # Transpose: (N, B, D)
+            x_t = x.transpose(0, 1)
+
+            # Normalize each token position across the batch
+            mean = x_t.mean(dim=1, keepdim=True)  # (N, 1, D)
+            var = x_t.var(dim=1, unbiased=False, keepdim=True)  # (N, 1, D)
+            x_norm = (x_t - mean) / (var + self.eps).sqrt()  # (N, B, D)
+
+            # Apply learnable affine transform
+            if self.affine:
+                x_norm = x_norm * self.weight.unsqueeze(1) + self.bias.unsqueeze(
+                    1
+                )  # (N, B, D)
+
+            return x_norm.transpose(0, 1)  # Back to (B, N, D)
+
+    def replace_layernorm_with_token_batchnorm(model, num_tokens):
+        for name, module in model.named_children():
+            if isinstance(module, nn.LayerNorm):
+                d = module.normalized_shape[0]
+                norm = TokenWiseBatchNorm(num_tokens, d, eps=module.eps, affine=True)
+                with torch.no_grad():
+                    norm.weight.copy_(module.weight.unsqueeze(0).expand(num_tokens, -1))
+                    norm.bias.copy_(module.bias.unsqueeze(0).expand(num_tokens, -1))
+                norm = norm.to(next(module.parameters()).device)
+                setattr(model, name, norm)
+            else:
+                replace_layernorm_with_token_batchnorm(module, num_tokens)
+
     dataset_name = config.dataset.name
     resutl_file_path = os.path.join(
         "results_final_tta/",
@@ -136,6 +500,10 @@ def eval_source(args, config):
 
             inference_loader = load_tta_dataset(args, config)
 
+            replace_layernorm_with_token_batchnorm(base_model, 129)
+            base_model = base_model.to("cuda")
+            base_model = nn.DataParallel(base_model)
+
             with torch.no_grad():
                 for idx_inference, (data, labels) in enumerate(inference_loader):
                     if dataset_name == "modelnet":
@@ -160,9 +528,15 @@ def eval_source(args, config):
 
                     points = points.cuda()
                     labels = label.cuda()
-                    logits = base_model.module.classification_only(
-                        points, only_unmasked=False
-                    )
+                    if hasattr(base_model.module, "classification_only"):
+                        logits = base_model.module.classification_only(
+                            points, only_unmasked=False
+                        )
+                    else:
+                        logits = base_model(
+                            points,
+                        )
+
                     target = labels.view(-1)
                     pred = logits.argmax(-1).view(-1)
 
@@ -209,6 +583,7 @@ def eval_source(args, config):
                     f_write.flush()
                     f_write.close()
                     print(f"Final Results Saved at:", resutl_file_path)
+
 
 def eval_with_intermediate(args, config):
     dataset_name = config.dataset.name
@@ -287,7 +662,9 @@ def eval_with_intermediate(args, config):
 
                     points = points.cuda()
                     labels = label.cuda()
-                    logits = base_model.module.forward_intermediate(points, args.layer_idx)
+                    logits = base_model.module.forward_intermediate(
+                        points, args.layer_idx
+                    )
                     target = labels.view(-1)
                     pred = logits.argmax(-1).view(-1)
 
@@ -334,7 +711,6 @@ def eval_with_intermediate(args, config):
                     f_write.flush()
                     f_write.close()
                     print(f"Final Results Saved at:", resutl_file_path)
-
 
 
 def eval_source_rotnet(args, config):
@@ -642,10 +1018,141 @@ def tta_tent(args, config, train_writer=None):
             labels = labels.cuda()
             # points = [points for _ in range(args.batch_size_tta)]
             points = misc.fps(points, npoints)
-            logits = tent_shot_utils.forward_and_adapt_tent(
-                points, adapted_model, optimizer
-            )
+
+            # train
+            adapted_model.train()
+            if hasattr(adapted_model.module, "classification_only"):
+                logits = tent_shot_utils.forward_and_adapt_tent(
+                    points, adapted_model, optimizer
+                )
+            else:
+                logits = tent_shot_utils.forward_and_adapt_tent_pointtransformer(
+                    points, adapted_model, optimizer
+                )
+
+            # eval
+            adapted_model.eval()
+            if hasattr(adapted_model.module, "classification_only"):
+                logits = adapted_model.module.classification_only(
+                    points, only_unmasked=False
+                )
+            else:
+                logits = adapted_model(points)
+
             target = labels.view(-1)
+            pred = logits.argmax(-1).view(-1)
+
+            test_pred.append(pred.detach())
+            test_label.append(target.detach())
+            if idx % 50 == 0:
+                # intermediate results
+                test_pred_ = torch.cat(test_pred, dim=0)
+                test_label_ = torch.cat(test_label, dim=0)
+
+                if args.distributed:
+                    test_pred_ = dist_utils.gather_tensor(test_pred_, args)
+                    test_label_ = dist_utils.gather_tensor(test_label_, args)
+
+                acc = (
+                    (test_pred_ == test_label_).sum()
+                    / float(test_label_.size(0))
+                    * 100.0
+                )
+                print_log(
+                    f"\n\n\nIntermediate Accuracy - IDX {idx} - {acc:.1f}\n\n\n",
+                    logger=logger,
+                )
+        test_pred = torch.cat(test_pred, dim=0)
+        test_label = torch.cat(test_label, dim=0)
+        if args.distributed:
+            test_pred = dist_utils.gather_tensor(test_pred, args)
+            test_label = dist_utils.gather_tensor(test_label, args)
+        acc = (test_pred == test_label).sum() / float(test_label.size(0)) * 100.0
+        print_log(
+            f"\n\n######## Final Accuracy ::: {args.corruption} ::: {acc} ########\n\n",
+            logger=logger,
+        )
+        f_write.write(" ".join([str(round(float(xx), 3)) for xx in [acc]]) + "\n")
+        f_write.flush()
+
+        if corr_id == len(corruptions) - 1:
+            f_write.close()
+            print(f"Final Results Saved at:", resutl_file_path)
+
+            if train_writer is not None:
+                train_writer.close()
+
+
+def tta_tent_intermediate(args, config, train_writer=None):
+    dataset_name = config.dataset.name
+    resutl_file_path = os.path.join(
+        "results_final_tta/",
+        args.method,
+        f"{dataset_name}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
+    )
+    assert dataset_name is not None
+    # assert args.mask_ratio == 0.9
+    if dataset_name == "modelnet":
+        config.model.cls_dim = 40
+    elif dataset_name == "scanobject":
+        config.model.cls_dim = 15
+    elif dataset_name == "partnet":
+        config.model.cls_dim = 16
+    elif dataset_name == "shapenetcore":
+        config.model.cls_dim = 55
+    else:
+        raise NotImplementedError
+    # config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
+    config.model.group_norm = args.group_norm
+    npoints = config.npoints
+    logger = get_logger(args.log_name)
+    # base_model = load_base_model(args, config, logger)
+    # adapted_model, optimizer = tent_shot_utils.setup_tent_shot(args, model=base_model)
+    args.severity = 5
+    f_write = get_writer_to_all_result(args, config, custom_path=resutl_file_path)
+    f_write.write(f"All Corruptions: {corruptions}" + "\n\n")
+    f_write.write(f"TTA Results for Dataset: {dataset_name}" + "\n\n")
+    f_write.write(f"Checkpoint Used: {args.ckpts}" + "\n\n")
+    args.severity = 5
+    for corr_id, args.corruption in enumerate(corruptions):
+        base_model = load_base_model(args, config, logger)
+        adapted_model, optimizer = tent_shot_utils.setup_tent_shot(
+            args, model=base_model
+        )
+        tta_loader = load_tta_dataset(args, config)
+
+        test_pred = []
+        test_label = []
+        for idx, (data, labels) in enumerate(tta_loader):
+            adapted_model.zero_grad()
+            points = data.cuda()
+            labels = labels.cuda()
+            # points = [points for _ in range(args.batch_size_tta)]
+            points = misc.fps(points, npoints)
+
+            # train
+            adapted_model.train()
+            last_logit, mean_logit = adapted_model.module.forward_intermediate_dual(
+                points
+            )
+            psudu_label = last_logit.argmax(-1).detach()
+
+            #  cross entropy loss between mean_logit and psudu_label
+            loss = F.cross_entropy(mean_logit, psudu_label)
+            loss = loss.mean()
+            # logits = tent_shot_utils.forward_and_adapt_tent_pointtransformer(
+            #     points, adapted_model, optimizer
+            # )
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+            # eval
+            adapted_model.eval()
+            target = labels.view(-1)
+            with torch.no_grad():
+                logits = adapted_model(points)
+
             pred = logits.argmax(-1).view(-1)
 
             test_pred.append(pred.detach())

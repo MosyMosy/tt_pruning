@@ -2,6 +2,10 @@ import os
 import argparse
 from pathlib import Path
 
+def none_or_str(value):
+    if value == 'None':
+        return None
+    return value
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -23,7 +27,7 @@ def get_args():
     parser.add_argument("--visualize_data", action="store_true", help="image creation")
     parser.add_argument(
         "--ckpts",
-        type=str,
+        type=none_or_str,
         default="checkpoints/scan_object_src_only.pth",
         help="test used ckpt path",
     )  # default="checkpoints/modelnet_src_only.pth", help='test used ckpt path'
@@ -198,9 +202,24 @@ def get_args():
             "dua",
             "tta_x",
             "tta_token_mask",
-            "with_intermediate"
+            "with_intermediate",
+            "unclassified",
+            "tent_intermediate",
+            "tta_layer_prune",
+            "layer_average",
+            "tta_all_BN"
         ],
-        default="with_intermediate",
+        default="tta_token_mask",
+    )
+    
+    parser.add_argument(
+        "--prune_list", nargs="*", type=int, default=[7]
+    )
+    parser.add_argument(
+        "--purne_attention",
+        action="store_true",
+        default=False,
+        help="whether to prune the whole layer or just attention",
     )
 
     parser.add_argument(
@@ -209,7 +228,7 @@ def get_args():
     parser.add_argument(
         "--entropy_threshold",
         type=float,
-        default=100000,
+        default=0.1,
         help="entropy threshold for tta token mask",
     )
     
