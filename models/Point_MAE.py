@@ -1333,6 +1333,240 @@ class Point_MAE(nn.Module):
         else:
             return loss1, class_ret, regularization_loss
 
+@MODELS.register_module()
+class Point_MAE_only_cls(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        print_log(f"[Point_MAE] ", logger="Point_MAE")
+        self.config = config
+        self.cls_dim = config.cls_dim
+        self.group_norm = config.group_norm
+        self.num_hid_cls_layers = config.num_hid_cls_layers
+        self.trans_dim = config.transformer_config.trans_dim
+
+        self.MAE_encoder = MaskTransformer(config)
+        self.group_size = config.group_size
+        self.num_group = config.num_group
+        self.drop_path_rate = config.transformer_config.drop_path_rate
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, self.trans_dim))
+        self.regularize = config.regularize
+        self.decoder_pos_embed = nn.Sequential(
+            nn.Linear(3, 128), nn.GELU(), nn.Linear(128, self.trans_dim)
+        )
+
+        self.decoder_depth = config.transformer_config.decoder_depth
+        self.decoder_num_heads = config.transformer_config.decoder_num_heads
+        dpr = [
+            x.item() for x in torch.linspace(0, self.drop_path_rate, self.decoder_depth)
+        ]
+        self.MAE_decoder = TransformerDecoder(
+            embed_dim=self.trans_dim,
+            depth=self.decoder_depth,
+            drop_path_rate=dpr,
+            num_heads=self.decoder_num_heads,
+        )
+
+        last_dim = self.trans_dim # only_cls_token
+        class_blocks = []
+
+        for cls_block in range(0, self.num_hid_cls_layers):
+            if self.group_norm:
+                norm_layer = nn.GroupNorm(8, 256)
+            else:
+                norm_layer = nn.BatchNorm1d(256)
+
+            class_blocks.extend(
+                (
+                    nn.Linear(last_dim, 256),
+                    norm_layer,
+                    nn.ReLU(inplace=True),
+                    nn.Dropout(0.5),
+                )
+            )
+            last_dim = 256
+        self.class_head = nn.Sequential(
+            *class_blocks, nn.Linear(last_dim, self.cls_dim)
+        )
+
+        print_log(
+            f"[Point_MAE] divide point cloud into G{self.num_group} x S{self.group_size} points ...",
+            logger="Point_MAE",
+        )
+        self.group_divider = Group(num_group=self.num_group, group_size=self.group_size)
+
+        # prediction head
+        self.increase_dim = nn.Sequential(
+            # nn.Conv1d(self.trans_dim, 1024, 1),
+            # nn.BatchNorm1d(1024),
+            # nn.LeakyReLU(negative_slope=0.2),
+            nn.Conv1d(self.trans_dim, 3 * self.group_size, 1)
+        )
+
+        trunc_normal_(self.mask_token, std=0.02)
+        self.loss = config.loss
+        # loss
+        self.build_loss_func(self.loss)
+        self.l1_consistency_loss = torch.nn.L1Loss(reduction="mean")
+
+    def build_loss_func(self, loss_type):
+        if loss_type == "cdl1":
+            self.loss_func = ChamferDistanceL1().cuda()
+        elif loss_type == "cdl2":
+            self.loss_func = ChamferDistanceL2().cuda()
+        else:
+            raise NotImplementedError
+
+        self.loss_ce = nn.CrossEntropyLoss()
+
+        # self.loss_func = emd().cuda()
+
+    def get_loss_acc(self, ret, gt):
+        loss = self.loss_ce(ret, gt.long())
+        pred = ret.argmax(-1)
+        acc = (pred == gt).sum() / float(gt.size(0))
+        return loss, acc * 100
+
+    def load_model_from_ckpt(self, bert_ckpt_path, load_part_seg=None):
+        if bert_ckpt_path is not None:
+            ckpt = torch.load(bert_ckpt_path)
+            base_ckpt = {
+                k.replace("module.", ""): v for k, v in ckpt["base_model"].items()
+            }
+
+            incompatible = self.load_state_dict(base_ckpt, strict=False)
+
+            if incompatible.missing_keys:
+                print_log("missing_keys", logger="Transformer")
+                print_log(
+                    get_missing_parameters_message(incompatible.missing_keys),
+                    logger="Transformer",
+                )
+            if incompatible.unexpected_keys:
+                print_log("unexpected_keys", logger="Transformer")
+                print_log(
+                    get_unexpected_parameters_message(incompatible.unexpected_keys),
+                    logger="Transformer",
+                )
+
+            print_log(
+                f"[Transformer] Successful Loading the ckpt from {bert_ckpt_path}",
+                logger="Transformer",
+            )
+        else:
+            print_log("Training from scratch!!!", logger="Transformer")
+            self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=0.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+        elif isinstance(m, nn.Conv1d):
+            trunc_normal_(m.weight, std=0.02)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+
+    def classification_only(self, pts, only_unmasked=True):
+        neighborhood, center = self.group_divider(pts)
+        x_vis_w_token = self.MAE_encoder(
+            neighborhood, center, only_unmasked=only_unmasked
+        )[0]
+        # feat = torch.cat([, x_vis_w_token[:, 1:].max(1)[0]], dim=-1)
+        class_ret = self.class_head(x_vis_w_token[:, 0]) # only_cls_token
+        return class_ret
+
+    def forward(self, pts, vis=False, cyclic=False, **kwargs):
+        neighborhood, center = self.group_divider(pts)
+
+        x_vis_w_token, mask, _, _ = self.MAE_encoder(neighborhood, center)
+        x_vis = x_vis_w_token[:, 1:]
+        B, _, C = x_vis.shape  # B VIS C
+        pos_emd_vis = self.decoder_pos_embed(center[~mask]).reshape(B, -1, C)
+        pos_emd_mask = self.decoder_pos_embed(center[mask]).reshape(B, -1, C)
+
+        _, N, _ = pos_emd_mask.shape
+        mask_token = self.mask_token.expand(B, N, -1)
+        x_full = torch.cat([x_vis, mask_token], dim=1)
+        pos_full = torch.cat([pos_emd_vis, pos_emd_mask], dim=1)
+
+        x_rec = self.MAE_decoder(x_full, pos_full, N)
+
+        # feat = torch.cat([, x_vis_w_token[:, 1:].max(1)[0]], dim=-1)
+
+        if not cyclic:
+            class_ret = self.class_head(x_vis_w_token[:, 0]) # only_cls_token
+        else:
+            class_ret = self.classification_only(
+                pts, only_unmasked=False
+            )  # return logits from 100% of tokens
+
+        B, M, C = x_rec.shape
+        rebuild_points = (
+            self.increase_dim(x_rec.transpose(1, 2))
+            .transpose(1, 2)
+            .reshape(B * M, -1, 3)
+        )  # B M 1024
+        # if self.MAE_encoder.mask_ratio == 0:
+        #     gt_points = neighborhood.reshape(B * M, -1, 3)
+        # else:
+        gt_points = neighborhood[mask].reshape(B * M, -1, 3)
+
+        loss1 = self.loss_func(rebuild_points, gt_points)
+
+        if self.regularize:
+            vis_points = neighborhood[~mask].reshape(B * (self.num_group - M), -1, 3)
+
+            full_vis = vis_points + center[~mask].unsqueeze(1)
+            full_rebuild = rebuild_points + center[mask].unsqueeze(1)
+            full = torch.cat([full_vis, full_rebuild], dim=0).reshape(
+                B, self.num_group, 32, 3
+            )
+
+            mean_rebuild = torch.mean(full, dim=0)
+
+            regularization_loss = torch.tensor(0, dtype=torch.float).cuda()
+
+            for bs in range((full.shape[0])):
+                regularization_loss += self.loss_func(
+                    full[bs, :, :, :].squeeze(), mean_rebuild
+                )
+            regularization_loss = regularization_loss / full.shape[0]
+
+            mean_class_ret = class_ret.mean(dim=0)
+            ce_pred_consitency = torch.tensor(0, dtype=torch.float).cuda()
+
+            for bs in range((class_ret.shape[0])):
+                ce_pred_consitency += self.l1_consistency_loss(
+                    class_ret[bs, :].squeeze(), mean_class_ret.squeeze()
+                )
+            class_ret = ce_pred_consitency / class_ret.shape[0]
+
+        else:
+            regularization_loss = torch.tensor(0, dtype=torch.float).cuda()
+            class_ret = class_ret
+
+        # print(self.loss_func)
+        # vis = True
+        if vis:
+            vis_points = neighborhood[~mask].reshape(B * (self.num_group - M), -1, 3)
+            full_vis = vis_points + center[~mask].unsqueeze(1)
+            full_rebuild = rebuild_points + center[mask].unsqueeze(1)
+            full = torch.cat([full_vis, full_rebuild], dim=0)
+            # full_points = torch.cat([rebuild_points,vis_points], dim=0)
+            full_center = torch.cat([center[mask], center[~mask]], dim=0)
+            # full = full_points + full_center.unsqueeze(1)
+            ret2 = full_vis.reshape(-1, 3).unsqueeze(0)
+            ret1 = full.reshape(-1, 3).unsqueeze(0)
+            # return ret1, ret2
+            return ret1, ret2, full_center
+        else:
+            return loss1, class_ret, regularization_loss
+
+
+
 
 # todo pointmae model for joint-training of RotNet (sun et al. TTT)
 @MODELS.register_module()
