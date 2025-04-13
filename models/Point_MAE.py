@@ -308,6 +308,18 @@ class Block(nn.Module):
         x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x
 
+    def forward_norms_embedding(self, x):
+        norms_embedding = []
+
+        x_ = self.norm1(x)
+        norms_embedding.append(x_.cpu().detach())
+        x = x + self.drop_path(self.attn.forward_no_attn(x_))
+
+        x_ = self.norm2(x)
+        norms_embedding.append(x_.cpu().detach())
+        x = x + self.drop_path(self.mlp(x_))
+        return x, norms_embedding
+
 
 # todo now it will return the features and feature list for part-segmentation classification head
 class TransformerEncoder(nn.Module):
@@ -394,7 +406,7 @@ class TransformerEncoder(nn.Module):
 
     def forward_prototype_purge(self, x, pos, source_stats, layer_idx, purge_size=16):
         for i, block in enumerate(self.blocks):
-            if i in [1]:
+            if i in [0]:
                 B, N, C = x.shape
                 source_mean = source_stats[0][i][None, None, :].to(x.dtype)
                 source_std = source_stats[1][i][None, None, :].to(x.dtype)
@@ -428,7 +440,7 @@ class TransformerEncoder(nn.Module):
 
     def forward_cls_purge(self, x, pos, purge_size=16):
         for i, block in enumerate(self.blocks):
-            if i in [1]:
+            if i in [0]:
                 B, N, C = x.shape
                 cls_token = x[:, 0:1]
                 pos_cls = pos[:, 0:1]
@@ -498,7 +510,12 @@ class TransformerEncoder(nn.Module):
                 )  # shape: (B, N)
                 noise = torch.randn_like(x)
                 x = torch.where(entropy_mask, noise, x + pos)  # (B, N, C)
-                
+
+                # filter x using the entropy mask
+                # x = x[~entropy_mask.squeeze(-1)].reshape(B, -1, C)
+                # pos = pos[~entropy_mask.squeeze(-1)].reshape(B, -1, C)
+                # x = x + pos
+
                 x = block(x)
             else:
                 x = block(x + pos)
@@ -529,6 +546,13 @@ class TransformerEncoder(nn.Module):
             else:
                 x = block(x + pos)
         return x
+
+    def forward_norms_embedding(self, x, pos):
+        norms_embedding_list = []
+        for i, block in enumerate(self.blocks):
+            x, norms_embedding = block.forward_norms_embedding(x + pos)
+            norms_embedding_list += norms_embedding
+        return x, norms_embedding_list
 
 
 @MODELS.register_module()
@@ -892,6 +916,216 @@ class PointTransformer(nn.Module):
         x = self.norm(x)
         concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
         ret = self.class_head(concat_f)
+        return ret
+
+    def forward_norms_embedding(self):  # (self, pts):
+        # neighborhood, center = self.group_divider(pts)
+        # group_input_tokens = self.encoder(neighborhood)  # B G N
+        # cls_tokens = self.cls_token.expand(group_input_tokens.size(0), -1, -1)
+        # cls_pos = self.cls_pos.expand(group_input_tokens.size(0), -1, -1)
+
+        # pos = self.pos_embed(center)
+
+        # x = torch.cat((cls_tokens, group_input_tokens), dim=1)
+        # pos = torch.cat((cls_pos, pos), dim=1)
+        # transformer
+        x, norms_embedding = self.blocks.forward_norms_embedding(
+            self.cls_token, self.cls_pos
+        )
+        x = self.norm(x)
+        norms_embedding.append(x.cpu().detach())
+        concat_f = torch.cat([x[:, 0], x[:, 0]], dim=-1)
+
+        head_embbeding = self.class_head[0](concat_f)
+        head_embbeding = self.class_head[1](head_embbeding)
+        norms_embedding.append(head_embbeding.cpu().detach())
+        head_embbeding = self.class_head[2](head_embbeding)
+        head_embbeding = self.class_head[3](head_embbeding)
+        head_embbeding = self.class_head[4](head_embbeding)
+        head_embbeding = self.class_head[5](head_embbeding)
+        norms_embedding.append(head_embbeding.cpu().detach())
+        head_embbeding = self.class_head[6](head_embbeding)
+        head_embbeding = self.class_head[7](head_embbeding)
+        ret = self.class_head[8](head_embbeding)
+        # ret = self.class_head(concat_f)
+        return ret, norms_embedding
+
+
+@MODELS.register_module()
+class PointTransformer_cls_only(nn.Module):
+    def __init__(self, config, **kwargs):
+        super().__init__()
+        self.config = config
+        self.trans_dim = config.trans_dim
+        self.depth = config.depth
+        self.drop_path_rate = config.drop_path_rate
+        self.cls_dim = config.cls_dim
+        self.num_heads = config.num_heads
+        self.num_hid_cls_layers = config.num_hid_cls_layers
+        self.group_size = config.group_size
+        self.num_group = config.num_group
+        self.encoder_dims = config.encoder_dims
+
+        self.group_divider = Group(num_group=self.num_group, group_size=self.group_size)
+
+        self.encoder = Encoder(encoder_channel=self.encoder_dims)
+
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, self.trans_dim))
+        self.cls_pos = nn.Parameter(torch.randn(1, 1, self.trans_dim))
+
+        self.pos_embed = nn.Sequential(
+            nn.Linear(3, 128), nn.GELU(), nn.Linear(128, self.trans_dim)
+        )
+
+        dpr = [x.item() for x in torch.linspace(0, self.drop_path_rate, self.depth)]
+        self.blocks = TransformerEncoder(
+            embed_dim=self.trans_dim,
+            depth=self.depth,
+            drop_path_rate=dpr,
+            num_heads=self.num_heads,
+        )
+
+        self.norm = nn.LayerNorm(self.trans_dim)
+
+        last_dim = self.trans_dim
+        class_blocks = []
+        for cls_block in range(0, self.num_hid_cls_layers):
+            class_blocks.extend(
+                (
+                    nn.Linear(last_dim, 256),
+                    nn.BatchNorm1d(256),
+                    nn.ReLU(inplace=True),
+                    nn.Dropout(0.5),
+                )
+            )
+            last_dim = 256
+        self.class_head = nn.Sequential(
+            *class_blocks, nn.Linear(last_dim, self.cls_dim)
+        )
+
+        self.build_loss_func()
+
+        trunc_normal_(self.cls_token, std=0.02)
+        trunc_normal_(self.cls_pos, std=0.02)
+
+    def build_loss_func(self):
+        self.loss_ce = nn.CrossEntropyLoss()
+
+    def get_loss_acc(self, ret, gt):
+        loss = self.loss_ce(ret, gt.long())
+        pred = ret.argmax(-1)
+        acc = (pred == gt).sum() / float(gt.size(0))
+        return loss, acc * 100
+
+    def load_model_from_ckpt(self, bert_ckpt_path):
+        if bert_ckpt_path is not None:
+            ckpt = torch.load(bert_ckpt_path)
+            base_ckpt = {
+                k.replace("module.", ""): v for k, v in ckpt["base_model"].items()
+            }
+
+            base_ckpt = {
+                k.replace("class_head.8.custom_last_layer_name", "class_head.8"): v
+                for k, v in base_ckpt.items()
+            }
+
+            # delete the cls head in case it had a different number of classes
+            to_delete_prefix = "class_head.8"
+            # Check if the key exists and its shape meets the condition
+            if f"{to_delete_prefix}.weight" in base_ckpt:
+                shape = base_ckpt[f"{to_delete_prefix}.weight"].shape  # Get the shape
+                # Replace `x` with the shape condition you want to check
+                if shape[0] != self.cls_dim:
+                    # Delete all keys that start with "class_head.8"
+                    keys_to_delete = [
+                        k
+                        for k in list(base_ckpt.keys())
+                        if k.startswith(to_delete_prefix)
+                    ]
+                    for k in keys_to_delete:
+                        del base_ckpt[k]
+
+            for k in list(base_ckpt.keys()):
+                if k.startswith("MAE_encoder"):
+                    base_ckpt[k[len("MAE_encoder.") :]] = base_ckpt[k]
+                    del base_ckpt[k]
+                elif k.startswith("base_model"):
+                    base_ckpt[k[len("base_model.") :]] = base_ckpt[k]
+                    del base_ckpt[k]
+
+            incompatible = self.load_state_dict(base_ckpt, strict=False)
+
+            if incompatible.missing_keys:
+                print_log("missing_keys", logger="Transformer")
+                print_log(
+                    get_missing_parameters_message(incompatible.missing_keys),
+                    logger="Transformer",
+                )
+            if incompatible.unexpected_keys:
+                print_log("unexpected_keys", logger="Transformer")
+                print_log(
+                    get_unexpected_parameters_message(incompatible.unexpected_keys),
+                    logger="Transformer",
+                )
+
+            print_log(
+                f"[Transformer] Successful Loading the ckpt from {bert_ckpt_path}",
+                logger="Transformer",
+            )
+        else:
+            print_log("Training from scratch!!!", logger="Transformer")
+            self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=0.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+        elif isinstance(m, nn.Conv1d):
+            trunc_normal_(m.weight, std=0.02)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, pts):
+        neighborhood, center = self.group_divider(pts)
+        group_input_tokens = self.encoder(neighborhood)  # B G N
+        cls_tokens = self.cls_token.expand(group_input_tokens.size(0), -1, -1)
+        cls_pos = self.cls_pos.expand(group_input_tokens.size(0), -1, -1)
+
+        pos = self.pos_embed(center)
+
+        x = torch.cat((cls_tokens, group_input_tokens), dim=1)
+        pos = torch.cat((cls_pos, pos), dim=1)
+        # transformer
+        x = self.blocks(x, pos)[0]
+        x = self.norm(x)
+        concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
+        ret = self.class_head(concat_f)
+        return ret
+
+    def forward_token_mask(self, pts, entropy_threshold=0.5):
+        neighborhood, center = self.group_divider(pts)
+        group_input_tokens = self.encoder(neighborhood)  # B G N
+        cls_tokens = self.cls_token.expand(group_input_tokens.size(0), -1, -1)
+        cls_pos = self.cls_pos.expand(group_input_tokens.size(0), -1, -1)
+
+        pos = self.pos_embed(center)
+
+        x = torch.cat((cls_tokens, group_input_tokens), dim=1)
+        pos = torch.cat((cls_pos, pos), dim=1)
+        # transformer
+
+        x, entropy_mask = self.blocks.forward_token_mask(
+            x, pos, entropy_threshold=entropy_threshold
+        )
+        x = self.norm(x)
+        # x = x * (entropy_mask * (-1e6) + 1)
+        ret = self.class_head(x[:, 0])
+
+        # entropy_list = torch.FloatTensor(entropy_list)
         return ret
 
 
@@ -1333,6 +1567,7 @@ class Point_MAE(nn.Module):
         else:
             return loss1, class_ret, regularization_loss
 
+
 @MODELS.register_module()
 class Point_MAE_only_cls(nn.Module):
     def __init__(self, config):
@@ -1366,7 +1601,7 @@ class Point_MAE_only_cls(nn.Module):
             num_heads=self.decoder_num_heads,
         )
 
-        last_dim = self.trans_dim # only_cls_token
+        last_dim = self.trans_dim  # only_cls_token
         class_blocks = []
 
         for cls_block in range(0, self.num_hid_cls_layers):
@@ -1475,7 +1710,7 @@ class Point_MAE_only_cls(nn.Module):
             neighborhood, center, only_unmasked=only_unmasked
         )[0]
         # feat = torch.cat([, x_vis_w_token[:, 1:].max(1)[0]], dim=-1)
-        class_ret = self.class_head(x_vis_w_token[:, 0]) # only_cls_token
+        class_ret = self.class_head(x_vis_w_token[:, 0])  # only_cls_token
         return class_ret
 
     def forward(self, pts, vis=False, cyclic=False, **kwargs):
@@ -1497,7 +1732,7 @@ class Point_MAE_only_cls(nn.Module):
         # feat = torch.cat([, x_vis_w_token[:, 1:].max(1)[0]], dim=-1)
 
         if not cyclic:
-            class_ret = self.class_head(x_vis_w_token[:, 0]) # only_cls_token
+            class_ret = self.class_head(x_vis_w_token[:, 0])  # only_cls_token
         else:
             class_ret = self.classification_only(
                 pts, only_unmasked=False
@@ -1564,8 +1799,6 @@ class Point_MAE_only_cls(nn.Module):
             return ret1, ret2, full_center
         else:
             return loss1, class_ret, regularization_loss
-
-
 
 
 # todo pointmae model for joint-training of RotNet (sun et al. TTT)

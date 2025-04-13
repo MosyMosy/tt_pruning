@@ -11,14 +11,15 @@ from tools.tta import (
     tta_dua,
     eval_source,
     tta_tent_intermediate,
-    eval_source_layer_average, 
-    eval_source_all_BN
+    eval_source_layer_average,
+    eval_source_all_BN,
 )
 from tools.tta_unclassified import runner as runner_unclassified
 from tools.tta_intermediate import runner as runner_intermediate
 from tools.tta_x import runner as runner_x
 from tools.tta_token_mask import runner as runner_token_mask
 from tools.tta_layer_prune import runner as runner_layer_prune
+from tools.tta_cls_stat import runner as runner_cls_stat
 import time
 import os
 import torch
@@ -118,6 +119,7 @@ def main(args):
         "tta_layer_prune": runner_layer_prune,
         "layer_average": eval_source_layer_average,
         "tta_all_BN": eval_source_all_BN,
+        "tta_cls_stat": runner_cls_stat,
     }
 
     args.split = "test"

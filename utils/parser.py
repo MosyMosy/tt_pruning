@@ -34,7 +34,7 @@ def get_args():
     parser.add_argument(
         "--config",
         type=str,
-        default="cfgs/tta_purge/tta_purge_scanobject.yaml",
+        default="cfgs/tta/tta_scanobj.yaml",
         help="yaml config file",
     )
     parser.add_argument(
@@ -207,13 +207,14 @@ def get_args():
             "tent_intermediate",
             "tta_layer_prune",
             "layer_average",
-            "tta_all_BN"
+            "tta_all_BN", 
+            "tta_cls_stat",
         ],
-        default="tta_token_mask",
+        default="source_only",
     )
     
     parser.add_argument(
-        "--prune_list", nargs="*", type=int, default=[7]
+        "--prune_list", nargs="*", type=int, default=[]
     )
     parser.add_argument(
         "--purne_attention",
@@ -228,7 +229,7 @@ def get_args():
     parser.add_argument(
         "--entropy_threshold",
         type=float,
-        default=0.1,
+        default=0.5,
         help="entropy threshold for tta token mask",
     )
     

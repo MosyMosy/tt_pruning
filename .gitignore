@@ -181,5 +181,6 @@ experiments/
 label_features/
 
 lab/Batch_Norm_Analyzer/
+lab/colored_pcs
 
 *.xyz

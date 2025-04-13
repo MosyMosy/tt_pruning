@@ -7,11 +7,117 @@ import datasets.tta_datasets as tta_datasets
 from torch.utils.data import DataLoader
 from utils.misc import *
 import numpy as np
+import torch.nn.functional as F
 
 
 level = [5]
 
 from tqdm import tqdm
+
+
+class BatchNorm1dWithClsTransform(nn.BatchNorm1d):
+    def __init__(
+        self,
+        num_features,
+        eps=1e-5,
+        momentum=0.1,
+        affine=True,
+        track_running_stats=True,
+        cls_mean=None,
+        cls_std=None,
+    ):
+        super().__init__(num_features, eps, momentum, affine, track_running_stats)
+
+        # Learnable cls transformation parameters (one per channel)
+        self.cls_mean = cls_mean
+        self.cls_std = cls_std
+
+    def forward(self, input):
+        # Normal BatchNorm output
+        out = super().forward(input)  # shape: (B, C, N) or (B, C)
+
+        # Apply cls transformation
+        # out = (out - out.mean(dim=-1, keepdim=True)) / (
+        #     out.std(dim=-1, keepdim=True) + self.eps
+        # )
+        out = out * self.cls_std + self.cls_mean
+        return out
+
+
+class LayerNormWithClsTransform(nn.LayerNorm):
+    def __init__(
+        self,
+        normalized_shape,
+        eps=1e-5,
+        elementwise_affine=True,
+        cls_mean=None,
+        cls_std=None,
+    ):
+        super().__init__(normalized_shape, eps, elementwise_affine)
+
+        # Register cls-specific transformation parameters
+        shape = (
+            (normalized_shape,)
+            if isinstance(normalized_shape, int)
+            else tuple(normalized_shape)
+        )
+        self.cls_mean = cls_mean
+        self.cls_std = cls_std
+
+    def forward(self, input):
+        # Standard LayerNorm
+        out = super().forward(input)
+
+        # Apply transformation
+        # out = (out - out.mean(dim=-1, keepdim=True)) / (
+        #     out.std(dim=-1, keepdim=True) + self.eps
+        # )
+        out = out * self.cls_std + self.cls_mean
+        return out
+
+
+def replace_norms_with_cls_versions(model, cls_norms_embedding, device=None, skip=2):
+    if device is None:
+        device = next(model.parameters()).device
+
+    norm_idx = 0  # index over all norm layers
+
+    def _recursive_replace(module):
+        nonlocal norm_idx
+        for name, child in module.named_children():
+            if isinstance(child, nn.BatchNorm1d):
+                if norm_idx >= skip:
+                    new_module = BatchNorm1dWithClsTransform(
+                        num_features=child.num_features,
+                        eps=child.eps,
+                        momentum=child.momentum,
+                        affine=child.affine,
+                        track_running_stats=child.track_running_stats,
+                        cls_mean=cls_norms_embedding[norm_idx - skip].mean().item(),
+                        cls_std=cls_norms_embedding[norm_idx - skip].std().item(),
+                    )
+                    setattr(module, name, new_module.to(device))
+                norm_idx += 1
+
+            elif isinstance(child, nn.LayerNorm):
+                if norm_idx >= skip:
+                    new_module = LayerNormWithClsTransform(
+                        normalized_shape=child.normalized_shape,
+                        eps=child.eps,
+                        elementwise_affine=child.elementwise_affine,
+                        cls_mean=cls_norms_embedding[norm_idx - skip].mean().item(),
+                        cls_std=cls_norms_embedding[norm_idx - skip].std().item(),
+                    )
+                    setattr(module, name, new_module.to(device))
+                norm_idx += 1
+
+            else:
+                _recursive_replace(child)
+
+    if isinstance(model, nn.DataParallel):
+        model = model.module
+
+    _recursive_replace(model)
 
 
 def load_tta_dataset(args, config):
@@ -127,6 +233,7 @@ def eval(
     resutl_file_path,
 ):
     time_list = []
+    _, cls_norms_embedding = source_model.module.forward_norms_embedding()
     for args.severity in level:
         for corr_id, args.corruption in enumerate(corruptions):
             start_time = time.time()
@@ -158,6 +265,7 @@ def eval(
             entropy_list = []
 
             base_model = load_base_model(args, config, logger, pretrained=False)
+            replace_norms_with_cls_versions(base_model, cls_norms_embedding)
             base_model.load_state_dict(source_model.state_dict())
 
             for idx, (data, labels) in enumerate(tta_loader):
@@ -206,10 +314,9 @@ def eval(
                             m.running_mean = None  # for original implementation of tent
                             m.running_var = None  # for original implementation of tent
                 with torch.no_grad():
-                    logits = base_model.module.forward_token_mask(
+                    logits = base_model(
                         points,
-                        entropy_threshold=args.entropy_threshold,
-                    ).unsqueeze(1)
+                    )
 
                 target = labels.view(-1)
                 pred = logits.argmax(-1).view(-1)
