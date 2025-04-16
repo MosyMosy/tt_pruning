@@ -34,7 +34,7 @@ def get_args():
     parser.add_argument(
         "--config",
         type=str,
-        default="cfgs/tta/tta_scanobj.yaml",
+        default="cfgs/tta_purge/tta_purge_scanobject.yaml",
         help="yaml config file",
     )
     parser.add_argument(
@@ -210,7 +210,7 @@ def get_args():
             "tta_all_BN", 
             "tta_cls_stat",
         ],
-        default="source_only",
+        default="tta_cls_stat",
     )
     
     parser.add_argument(
@@ -241,9 +241,9 @@ def get_args():
     )
 
     # parser.add_argument("--LR", type=float, default=1e-5)
-    parser.add_argument("--LR", type=float, default=0.005)
+    parser.add_argument("--LR", type=float, default=0.001)
     parser.add_argument("--BETA", type=float, default=0.9)
-    parser.add_argument("--WD", type=float, default=0.5)
+    parser.add_argument("--WD", type=float, default=0.0)
 
     parser.add_argument("--bftt3d_stages", type=int, default=3)
     parser.add_argument("--bftt3d_dim", type=int, default=72)

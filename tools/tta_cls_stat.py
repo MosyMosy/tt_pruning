@@ -15,6 +15,41 @@ level = [5]
 from tqdm import tqdm
 
 
+def gaussian_difference(x: torch.Tensor, eps: float = 1e-5):
+
+    if len(x.shape) == 2:
+        B, d = x.shape
+    elif len(x.shape) == 3:
+        B, N, d = x.shape
+    else:
+        raise ValueError("Input tensor must be 2D or 3D")
+
+    x_flat = x.view(-1, d)  # shape: (B*N, d)
+
+    # Allocate result tensors
+    x_sorted, sort_idx = x_flat.sort(dim=1)
+    reverse_idx = sort_idx.argsort(dim=1)
+
+    # Compute per-row mean and std
+    mean = x_flat.mean(dim=1, keepdim=True)
+    std = x_flat.std(dim=1, keepdim=True)
+
+    # Generate Gaussian targets (same for all rows, normalized)
+    z = torch.linspace(eps, 1 - eps, steps=d, device=x.device)
+    target_gauss = torch.sqrt(torch.tensor(2.0, device=x.device)) * torch.erfinv(
+        2 * z - 1
+    )  # (d,)
+
+    # Scale and shift to each row's mean and std
+    target_gauss = target_gauss.unsqueeze(0) * std + mean  # (B*N, d)
+
+    # Compute delta and reverse sort
+    delta_sorted = x_sorted - target_gauss
+    delta = torch.gather(delta_sorted, dim=1, index=reverse_idx)
+
+    return delta.view(*x.shape)
+
+
 class BatchNorm1dWithClsTransform(nn.BatchNorm1d):
     def __init__(
         self,
@@ -32,15 +67,90 @@ class BatchNorm1dWithClsTransform(nn.BatchNorm1d):
         self.cls_mean = cls_mean
         self.cls_std = cls_std
 
-    def forward(self, input):
+    def forward_(self, input):
         # Normal BatchNorm output
-        out = super().forward(input)  # shape: (B, C, N) or (B, C)
+        # out = super().forward(input)  # shape: (B, C, N) or (B, C)
 
-        # Apply cls transformation
-        # out = (out - out.mean(dim=-1, keepdim=True)) / (
-        #     out.std(dim=-1, keepdim=True) + self.eps
-        # )
+        target_var = input.var(dim=0, keepdim=True, unbiased=False)
+        target_mean = input.mean(dim=0, keepdim=True)
+        target_std = torch.sqrt(target_var + self.eps).clamp_min(1e-3)
+
+        # 2. Source stats
+        source_mean = self.running_mean.unsqueeze(0)
+        source_std = torch.sqrt(self.running_var + self.eps).unsqueeze(0)
+
+        # 3. Affine reparam (core idea preserved)
+        a = source_std / target_std
+        b = (source_mean - target_mean) / target_std
+
+        gamma = self.weight.unsqueeze(0)
+        beta = self.bias.unsqueeze(0)
+
+        gamma_new = gamma * a
+        beta_new = beta + gamma * b
+
+        normalized_target = (input - target_mean) / (target_std + self.eps)
+
+        out = normalized_target * gamma + beta
+
+        # fix the output using the cls-specific transformation
         out = out * self.cls_std + self.cls_mean
+
+        return out
+
+    def forward__(self, input):
+
+        target_var = input.var(dim=0, keepdim=True, unbiased=False)
+        target_mean = input.mean(dim=0, keepdim=True)
+        target_std = torch.sqrt(target_var + self.eps).clamp_min(1e-3)
+
+        out = (input - target_mean) / (target_std + self.eps)
+
+        # out = out * self.weight + self.bias
+        diff = gaussian_difference(out)
+        diff_mean = diff.mean(dim=(0, 1), keepdim=True)
+        out = out * self.weight + (self.bias - diff_mean)
+
+        return out
+
+    def forward(self, input):
+        in_dim = input.dim()
+        if in_dim == 3:
+            input = input.permute(0, 2, 1)
+
+        target_var = input.var(
+            dim=tuple(range(in_dim - 1)), keepdim=True, unbiased=False
+        )
+        target_mean = input.mean(dim=tuple(range(in_dim - 1)), keepdim=True)
+        target_std = torch.sqrt(target_var + self.eps)
+
+        out = (input - target_mean) / (target_std + self.eps)
+
+        out = out * self.weight + self.bias
+
+        # out = out * self.cls_std + self.cls_mean # has no effect on scanobject and modelnet. Degrades on shapenet
+
+        if in_dim == 3:
+            out = out.permute(0, 2, 1)
+        return out
+
+    def forward_failed(self, input):
+
+        k = 1.5
+
+        target_var = input.var(dim=0, keepdim=True, unbiased=False)
+        target_mean = input.mean(dim=0, keepdim=True)
+        target_std = torch.sqrt(target_var + self.eps).clamp_min(1e-3)
+        out = (input - target_mean) / (target_std + self.eps)
+
+        mask = (out >= target_mean - k * target_std) & (
+            out <= target_mean + k * target_std
+        )
+
+        out = out * (~mask).float()
+
+        # out = out * self.weight + self.bias
+
         return out
 
 
@@ -52,6 +162,7 @@ class LayerNormWithClsTransform(nn.LayerNorm):
         elementwise_affine=True,
         cls_mean=None,
         cls_std=None,
+        out_prototype=None,
     ):
         super().__init__(normalized_shape, eps, elementwise_affine)
 
@@ -63,20 +174,95 @@ class LayerNormWithClsTransform(nn.LayerNorm):
         )
         self.cls_mean = cls_mean
         self.cls_std = cls_std
+        self.out_prototype = out_prototype
+
+    def forward_fail(self, input):
+        # This didn't work for some reason
+
+        input_mean = input.mean(dim=-1, keepdim=True)
+        input_std = (input.var(dim=-1, keepdim=True) + self.eps).sqrt()
+        out = (input - input_mean) / (input_std + self.eps)
+
+        out_mean = out.mean(dim=(0, 1), keepdim=True)
+        out_std = (out.var(dim=(0, 1), keepdim=True) + self.eps).sqrt()
+        out = (out - out_mean) / (out_std + self.eps)
+        # out = out * self.weight + self.bias
+
+        return out
+
+    def forward___(self, input):
+
+        input_mean = input.mean(dim=-1, keepdim=True)
+        input_std = (input.var(dim=-1, keepdim=True) + self.eps).sqrt()
+        out = (input - input_mean) / (input_std + self.eps)
+
+        diff = gaussian_difference(out)
+        diff_mean = diff.mean(dim=(0, 1), keepdim=True)
+        out = out * self.weight + (self.bias - diff_mean)
+
+        return out
+
+    def forward_(self, input):
+
+        input_mean = input.mean(dim=-1, keepdim=True)
+        input_std = (input.var(dim=-1, keepdim=True) + self.eps).sqrt()
+        out = (input - input_mean) / (input_std + self.eps)
+
+        out = out * self.weight + self.bias
+
+        cls_out_mean = out[:, 0:1].mean()
+        cls_out_std = (out[:, 0:1].var() + self.eps).sqrt()
+
+        out = (out - out.mean(dim=-1, keepdim=True)) / (
+            out.std(dim=-1, keepdim=True) + self.eps
+        )
+        out = out * cls_out_std + cls_out_mean
+
+        return out
 
     def forward(self, input):
         # Standard LayerNorm
         out = super().forward(input)
 
-        # Apply transformation
-        # out = (out - out.mean(dim=-1, keepdim=True)) / (
-        #     out.std(dim=-1, keepdim=True) + self.eps
-        # )
         out = out * self.cls_std + self.cls_mean
         return out
 
 
-def replace_norms_with_cls_versions(model, cls_norms_embedding, device=None, skip=2):
+def replace_batchnorm(model, cls_norms_embedding):
+
+    device = next(model.parameters()).device
+    idx = 0
+
+    def _recursive_replace(module):
+        nonlocal idx
+        for name, child in module.named_children():
+
+            if isinstance(child, nn.BatchNorm1d):
+                if idx >= 0:
+                    new_module = BatchNorm1dWithClsTransform(
+                        num_features=child.num_features,
+                        eps=child.eps,
+                        momentum=child.momentum,
+                        affine=child.affine,
+                        track_running_stats=child.track_running_stats,
+                        cls_mean=cls_norms_embedding[idx].mean().item(),
+                        cls_std=cls_norms_embedding[idx].std().item(),
+                    )
+                    setattr(module, name, new_module.to(device))
+                idx += 1
+                # return
+            else:
+                _recursive_replace(child)
+
+    if isinstance(model, nn.DataParallel):
+        model = model.module
+
+    _recursive_replace(model)
+
+
+def replace_layernorm_with_cls_versions(
+    model, cls_norms_embedding, device=None, skip=2
+):
     if device is None:
         device = next(model.parameters()).device
 
@@ -86,17 +272,7 @@ def replace_norms_with_cls_versions(model, cls_norms_embedding, device=None, ski
         nonlocal norm_idx
         for name, child in module.named_children():
             if isinstance(child, nn.BatchNorm1d):
-                if norm_idx >= skip:
-                    new_module = BatchNorm1dWithClsTransform(
-                        num_features=child.num_features,
-                        eps=child.eps,
-                        momentum=child.momentum,
-                        affine=child.affine,
-                        track_running_stats=child.track_running_stats,
-                        cls_mean=cls_norms_embedding[norm_idx - skip].mean().item(),
-                        cls_std=cls_norms_embedding[norm_idx - skip].std().item(),
-                    )
-                    setattr(module, name, new_module.to(device))
+
                 norm_idx += 1
 
             elif isinstance(child, nn.LayerNorm):
@@ -107,9 +283,11 @@ def replace_norms_with_cls_versions(model, cls_norms_embedding, device=None, ski
                         elementwise_affine=child.elementwise_affine,
                         cls_mean=cls_norms_embedding[norm_idx - skip].mean().item(),
                         cls_std=cls_norms_embedding[norm_idx - skip].std().item(),
+                        out_prototype=cls_norms_embedding[norm_idx - skip],
                     )
                     setattr(module, name, new_module.to(device))
                 norm_idx += 1
+                return
 
             else:
                 _recursive_replace(child)
@@ -233,6 +411,7 @@ def eval(
     resutl_file_path,
 ):
     time_list = []
+    acc_list = []
     _, cls_norms_embedding = source_model.module.forward_norms_embedding()
     for args.severity in level:
         for corr_id, args.corruption in enumerate(corruptions):
@@ -265,13 +444,17 @@ def eval(
             entropy_list = []
 
             base_model = load_base_model(args, config, logger, pretrained=False)
-            replace_norms_with_cls_versions(base_model, cls_norms_embedding)
+            replace_batchnorm(base_model.module.class_head, cls_norms_embedding[-2:])
+            replace_layernorm_with_cls_versions(base_model, cls_norms_embedding)
             base_model.load_state_dict(source_model.state_dict())
 
             for idx, (data, labels) in enumerate(tta_loader):
                 # now inferring on this one sample
                 a = iter(tta_loader)
                 data, labels = next(a)
+                if data.shape[0] == 1:
+                    data = data.repeat(2, 1, 1)
+                    labels = labels.repeat(2, 1)
                 # reset batchnorm running stats
 
                 base_model.eval()
@@ -296,17 +479,6 @@ def eval(
                 #     labels = labels.cuda()
                 # # data = data.cuda()
 
-                points = data.cuda()
-                labels = labels.cuda()
-                points = [
-                    misc.fps(points, config.npoints, random_start_point=True)
-                    for _ in range(args.batch_size_tta)
-                ]
-                points = torch.cat(points, dim=0)
-
-                labels = [labels for _ in range(args.batch_size_tta)]
-                labels = torch.cat(labels, dim=0)
-
                 # reset batchnorm running stats
                 if args.BN_reset:
                     for m in base_model.modules():
@@ -314,15 +486,25 @@ def eval(
                             m.running_mean = None  # for original implementation of tent
                             m.running_var = None  # for original implementation of tent
                 with torch.no_grad():
+                    points = data.cuda()
+                    labels = labels.cuda()
+                    points = [
+                        misc.fps(points, config.npoints, random_start_point=True)
+                        for _ in range(args.batch_size_tta)
+                    ]
+                    points = torch.cat(points, dim=0)
+
+                    labels = [labels for _ in range(args.batch_size_tta)]
+                    labels = torch.cat(labels, dim=0)
                     logits = base_model(
                         points,
                     )
 
-                target = labels.view(-1)
-                pred = logits.argmax(-1).view(-1)
+                    target = labels.view(-1)
+                    pred = logits.argmax(-1).view(-1)
 
-                test_pred.append(pred.detach())
-                test_label.append(target.detach())
+                    test_pred.append(pred.detach())
+                    test_label.append(target.detach())
 
                 if idx % 50 == 0:
                     test_pred_ = torch.cat(test_pred, dim=0)
@@ -354,6 +536,7 @@ def eval(
                 test_label = dist_utils.gather_tensor(test_label, args)
 
             acc = (test_pred == test_label).sum() / float(test_label.size(0)) * 100.0
+            acc_list.append(acc.cpu().item())
             print_log(
                 f"\n\n######## Final Accuracy ::: {args.corruption} ::: {acc} ########\n\n",
                 logger=logger,
@@ -380,6 +563,12 @@ def eval(
                     )
                     + "\n"
                 )
+
+                acc_list.append(
+                    sum(acc_list) / len(acc_list),
+                )
+                acc_list = [str(round(float(xx), 3)) for xx in acc_list]
+                f_write.write("\t".join(acc_list) + "\n")
 
                 f_write.flush()
                 f_write.close()
