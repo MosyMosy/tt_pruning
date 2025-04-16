@@ -16,7 +16,7 @@ from tools.tta import (
 )
 from tools.tta_unclassified import runner as runner_unclassified
 from tools.tta_intermediate import runner as runner_intermediate
-from tools.tta_x import runner as runner_x
+# from tools.tta_x import runner as runner_x
 from tools.tta_token_mask import runner as runner_token_mask
 from tools.tta_layer_prune import runner as runner_layer_prune
 from tools.tta_cls_stat import runner as runner_cls_stat
@@ -111,7 +111,7 @@ def main(args):
         "t3a": tta_t3a,
         "shot": tta_shot,
         "dua": tta_dua,
-        "tta_x": runner_x,
+        # "tta_x": runner_x,
         "tta_token_mask": runner_token_mask,
         "with_intermediate": runner_intermediate,
         "unclassified": runner_unclassified,
