@@ -3,7 +3,7 @@ import torch.jit
 import torch.optim as optim
 
 
-def setup_tent_shot(args, model):
+def setup_tent_shot(args, model, stat_reset=True):
     """Set up tent adaptation.
 
     Configure the model for training + feature modulation by batch statistics,
@@ -11,7 +11,7 @@ def setup_tent_shot(args, model):
     set up the optimizer, and then tent the model.
     """
     model = configure_model(
-        args, model
+        args, model, stat_reset=stat_reset
     )  #  set only Batchnorm3d layers to trainable,   freeze all the other layers
     params, param_names = collect_params(
         model, args
@@ -163,16 +163,17 @@ def load_model_and_optimizer(model, optimizer, model_state, optimizer_state):
     optimizer.load_state_dict(optimizer_state)
 
 
-def configure_model(args, model):
+def configure_model(args, model, stat_reset=True):
     """Configure model for use with tent."""
     model.train()
     model.requires_grad_(False)
     for m in model.modules():
         if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
             m.requires_grad_(True)
-        m.track_running_stats = False  # for original implementation this is False
-        m.running_mean = None  # for original implementation uncomment this
-        m.running_var = None  # for original implementation uncomment this
+        if stat_reset:
+            m.track_running_stats = False  # for original implementation this is False
+            m.running_mean = None  # for original implementation uncomment this
+            m.running_var = None  # for original implementation uncomment this
 
     return model
 

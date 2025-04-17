@@ -214,6 +214,20 @@ def get_args():
     )
     
     parser.add_argument(
+        "--cls_fixer_mode",
+        type=str,
+        choices=[
+            "source_only", 
+            "update_tent",
+            "source_only_org_ln", 
+            "update_tent_org_ln",
+        ],
+        default="source_only",
+    )
+    
+    
+    
+    parser.add_argument(
         "--prune_list", nargs="*", type=int, default=[]
     )
     parser.add_argument(

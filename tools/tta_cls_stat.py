@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader
 from utils.misc import *
 import numpy as np
 import torch.nn.functional as F
+import utils.tent_shot as tent_shot_utils
 
 
 level = [5]
@@ -113,7 +114,7 @@ class BatchNorm1dWithClsTransform(nn.BatchNorm1d):
 
         return out
 
-    def forward(self, input):
+    def forward_main(self, input):
         in_dim = input.dim()
         if in_dim == 3:
             input = input.permute(0, 2, 1)
@@ -444,9 +445,15 @@ def eval(
             entropy_list = []
 
             base_model = load_base_model(args, config, logger, pretrained=False)
-            replace_batchnorm(base_model.module.class_head, cls_norms_embedding[-2:])
-            replace_layernorm_with_cls_versions(base_model, cls_norms_embedding)
+            if "org_ln" not in args.cls_fixer_mode:
+                # replace_batchnorm(base_model.module.class_head, cls_norms_embedding[-2:])
+                replace_layernorm_with_cls_versions(base_model, cls_norms_embedding)
             base_model.load_state_dict(source_model.state_dict())
+
+            if "update_tent" in args.cls_fixer_mode:
+                base_model, optimizer = tent_shot_utils.setup_tent_shot(
+                    args, model=base_model, stat_reset=False
+                )
 
             for idx, (data, labels) in enumerate(tta_loader):
                 # now inferring on this one sample
@@ -485,26 +492,50 @@ def eval(
                         if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
                             m.running_mean = None  # for original implementation of tent
                             m.running_var = None  # for original implementation of tent
-                with torch.no_grad():
-                    points = data.cuda()
-                    labels = labels.cuda()
-                    points = [
-                        misc.fps(points, config.npoints, random_start_point=True)
-                        for _ in range(args.batch_size_tta)
-                    ]
-                    points = torch.cat(points, dim=0)
 
-                    labels = [labels for _ in range(args.batch_size_tta)]
-                    labels = torch.cat(labels, dim=0)
-                    logits = base_model(
-                        points,
+                points = data.cuda()
+                labels = labels.cuda()
+                points = [
+                    misc.fps(points, config.npoints, random_start_point=True)
+                    for _ in range(args.batch_size_tta)
+                ]
+                points = torch.cat(points, dim=0)
+
+                labels = [labels for _ in range(args.batch_size_tta)]
+                labels = torch.cat(labels, dim=0)
+
+                if "source_only" in args.cls_fixer_mode:
+                    base_model.eval()
+                    with torch.no_grad():
+                        logits = base_model(
+                            points,
+                        )
+                elif "update_tent" in args.cls_fixer_mode:
+                    base_model.train()
+                    logits = base_model(points)
+                    # (batch * n_views, 3, T, 224,224 )  -> (batch * n_views, n_class ) todo clip-level prediction
+                    loss = softmax_entropy(logits).mean(
+                        0
+                    )  #   todo compute the entropy for all clip-level predictions   then take the averaga among all samples
+                    loss.backward()
+                    optimizer.step()
+                    optimizer.zero_grad()
+
+                    base_model.eval()
+                    with torch.no_grad():
+                        logits = base_model(
+                            points,
+                        )
+                else:
+                    raise NotImplementedError(
+                        f"cls_fixer_mode {args.cls_fixer_mode} not implemented"
                     )
 
-                    target = labels.view(-1)
-                    pred = logits.argmax(-1).view(-1)
+                target = labels.view(-1)
+                pred = logits.argmax(-1).view(-1)
 
-                    test_pred.append(pred.detach())
-                    test_label.append(target.detach())
+                test_pred.append(pred.detach())
+                test_label.append(target.detach())
 
                 if idx % 50 == 0:
                     test_pred_ = torch.cat(test_pred, dim=0)
