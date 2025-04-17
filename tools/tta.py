@@ -1013,6 +1013,9 @@ def tta_tent(args, config, train_writer=None):
         test_pred = []
         test_label = []
         for idx, (data, labels) in enumerate(tta_loader):
+            if data.shape[0] == 1:
+                data = data.repeat(2, 1, 1)
+                labels = labels.repeat(2, 1)
             adapted_model.zero_grad()
             points = data.cuda()
             labels = labels.cuda()
