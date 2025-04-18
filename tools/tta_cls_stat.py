@@ -288,7 +288,6 @@ def replace_layernorm_with_cls_versions(
                     )
                     setattr(module, name, new_module.to(device))
                 norm_idx += 1
-                return
 
             else:
                 _recursive_replace(child)
@@ -513,9 +512,7 @@ def eval(
                 elif "update_tent" in args.cls_fixer_mode:
                     base_model.train()
                     logits = base_model(points)
-                    loss = softmax_entropy(
-                        logits
-                    ).mean()
+                    loss = softmax_entropy(logits).mean()
                     if "lossmerge" in args.cls_fixer_mode:
                         if args.batch_size_tta == 1:
                             raise NotImplementedError(
@@ -531,9 +528,7 @@ def eval(
                     base_model.eval()
                     if args.batch_size_tta > 1:
                         B, N, C = points.shape
-                        points = points.view(args.batch_size_tta, -1 ,N, C)[
-                            0
-                        ]
+                        points = points.view(args.batch_size_tta, -1, N, C)[0]
                         labels = labels.view(args.batch_size_tta, -1)[0]
                     with torch.no_grad():
                         logits = base_model(
