@@ -2,10 +2,12 @@ import os
 import argparse
 from pathlib import Path
 
+
 def none_or_str(value):
-    if value == 'None':
+    if value == "None":
         return None
     return value
+
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -207,29 +209,27 @@ def get_args():
             "tent_intermediate",
             "tta_layer_prune",
             "layer_average",
-            "tta_all_BN", 
+            "tta_all_BN",
             "tta_cls_stat",
         ],
         default="tta_cls_stat",
     )
-    
+
     parser.add_argument(
         "--cls_fixer_mode",
         type=str,
         choices=[
-            "source_only", 
+            "source_only",
+            "source_only_org_ln",
             "update_tent",
-            "source_only_org_ln", 
             "update_tent_org_ln",
+            "update_tent_lossmerge",
+            "update_tent_lossmerge_org_ln",
         ],
-        default="source_only",
+        default="update_tent",
     )
-    
-    
-    
-    parser.add_argument(
-        "--prune_list", nargs="*", type=int, default=[]
-    )
+
+    parser.add_argument("--prune_list", nargs="*", type=int, default=[])
     parser.add_argument(
         "--purne_attention",
         action="store_true",
@@ -246,7 +246,7 @@ def get_args():
         default=0.5,
         help="entropy threshold for tta token mask",
     )
-    
+
     parser.add_argument(
         "--layer_idx",
         type=int,

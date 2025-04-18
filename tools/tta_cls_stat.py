@@ -513,15 +513,28 @@ def eval(
                 elif "update_tent" in args.cls_fixer_mode:
                     base_model.train()
                     logits = base_model(points)
-                    # (batch * n_views, 3, T, 224,224 )  -> (batch * n_views, n_class ) todo clip-level prediction
-                    loss = softmax_entropy(logits).mean(
-                        0
-                    )  #   todo compute the entropy for all clip-level predictions   then take the averaga among all samples
+                    loss = softmax_entropy(
+                        logits
+                    ).mean()
+                    if "lossmerge" in args.cls_fixer_mode:
+                        if args.batch_size_tta == 1:
+                            raise NotImplementedError(
+                                "tta_batch_size should be > 1 for lossmerge"
+                            )
+                    loss = softmax_entropy(
+                        logits
+                    ).mean()  #   todo compute the entropy for all clip-level predictions   then take the averaga among all samples
                     loss.backward()
                     optimizer.step()
                     optimizer.zero_grad()
 
                     base_model.eval()
+                    if args.batch_size_tta > 1:
+                        B, N, C = points.shape
+                        points = points.view(args.batch_size_tta, -1 ,N, C)[
+                            0
+                        ]
+                        labels = labels.view(args.batch_size_tta, -1)[0]
                     with torch.no_grad():
                         logits = base_model(
                             points,
