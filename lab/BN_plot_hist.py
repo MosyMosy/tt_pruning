@@ -8,8 +8,8 @@ import matplotlib.cm as cm
 def plot_histograms(
     ax,
     input_data,
-    running_means,
-    running_vars,
+    means,
+    vars,
     colors,
     gaussian_color,
     label_prefix="",
@@ -18,7 +18,7 @@ def plot_histograms(
     x_min=None,
     x_max=None,
 ):
-    running_stds = np.sqrt(running_vars)
+    running_stds = np.sqrt(vars)
     positions = np.arange(num_channels)[::-1] * (fig_height_inches / num_channels)
     positions -= positions[-1]
 
@@ -33,7 +33,7 @@ def plot_histograms(
         hist_vals_offset = hist_vals + y_base
 
         # Gaussian - BN stats
-        mean_bn = running_means[i]
+        mean_bn = means[i]
         std_bn = running_stds[i]
         x_gauss_bn = np.linspace(mean_bn - num_std * std_bn * 3, mean_bn + num_std * std_bn * 3, 300)
         g_y_bn = norm.pdf(x_gauss_bn, loc=mean_bn, scale=std_bn)

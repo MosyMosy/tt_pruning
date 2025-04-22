@@ -196,6 +196,50 @@ class Attention(nn.Module):
         x = self.proj_drop(x)
         return x
 
+    def forward_entropy_weight(self, x):
+        B, N, C = x.shape
+        qkv = (
+            self.qkv(x)
+            .reshape(B, N, 3, self.num_heads, C // self.num_heads)
+            .permute(2, 0, 3, 1, 4)
+        )
+        q, k, v = (
+            qkv[0],
+            qkv[1],
+            qkv[2],
+        )  # make torchscript happy (cannot use tensor as tuple)
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+
+        # #################################################################
+
+        H = attn.shape[1]  # number of heads
+        diag_mask = (
+            torch.eye(N - 1, dtype=torch.bool, device=attn.device)
+            .unsqueeze(0)
+            .unsqueeze(0)
+        )  # (1, 1, N-1, N-1)
+        attn_no_diag = attn[:, :, 1:, 1:].masked_fill(diag_mask, 0.0)
+        attn_no_diag = attn_no_diag / attn_no_diag.sum(dim=-1, keepdim=True)
+        attn_entropy = -(attn_no_diag * attn_no_diag.clamp(min=1e-8).log()).sum(dim=-1)
+        # to make the entropy value between 0 and 1
+        attn_entropy = attn_entropy / math.log(N - 2)
+        # entropy_list.append([attn_entropy[:,:,0].mean().cpu().detach(), attn_entropy[:,:,1:].mean().cpu().detach()])
+        attn_entropy = attn_entropy.mean(dim=1)
+        attn_score = torch.softmax(-attn_entropy, dim=-1)
+
+        attn[:, :, :1, 1:] = (
+            attn[:, :, :1, 1:] * attn_score[:, None, None, :]
+        )  # multiply the row wise scores to the columns
+        # #####################################################################
+
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
+
     def forward_token_mask(self, x, entropy_threshold=0.5):
         B, N, C = x.shape
         qkv = (
@@ -290,6 +334,11 @@ class Block(nn.Module):
 
     def forward(self, x):
         x = x + self.drop_path(self.attn(self.norm1(x)))
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        return x
+
+    def forward_entropy_weight(self, x):
+        x = x + self.drop_path(self.attn.forward_entropy_weight(self.norm1(x)))
         x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x
 
@@ -550,7 +599,7 @@ class TransformerEncoder(nn.Module):
     def forward_norms_embedding(self, x, pos):
         norms_embedding_list = []
         for i, block in enumerate(self.blocks):
-            x, norms_embedding = block.forward_norms_embedding(x + pos)
+            x, norms_embedding = block.forward_norms_embedding(x)
             norms_embedding_list += norms_embedding
         return x, norms_embedding_list
 

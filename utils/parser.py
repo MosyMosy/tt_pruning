@@ -16,7 +16,7 @@ def get_args():
     parser.add_argument("--batch_size_tta", type=int, default=1)
     parser.add_argument("--stride_step", type=int, default=1)
     parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--grad_steps", type=int, default=0)
+    parser.add_argument("--grad_steps", type=int, default=1)
     parser.add_argument(
         "--disable_bn_adaptation",
         action="store_true",
@@ -220,13 +220,11 @@ def get_args():
         type=str,
         choices=[
             "source_only",
-            "source_only_org_ln",
+            "source_only_cls-fixer",
             "update_tent",
-            "update_tent_org_ln",
-            "update_tent_lossmerge",
-            "update_tent_lossmerge_org_ln",
+            "update_tent_cls-fixer",
         ],
-        default="update_tent",
+        default="source_only_cls-fixer",
     )
 
     parser.add_argument("--prune_list", nargs="*", type=int, default=[])

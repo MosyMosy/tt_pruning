@@ -9,6 +9,7 @@ from utils.misc import *
 import numpy as np
 import torch.nn.functional as F
 import utils.tent_shot as tent_shot_utils
+import torch.optim as optim
 
 
 level = [5]
@@ -224,8 +225,25 @@ class LayerNormWithClsTransform(nn.LayerNorm):
     def forward(self, input):
         # Standard LayerNorm
         out = super().forward(input)
+        # input_mean = input.mean(dim=-1, keepdim=True)
+        # input_std = (input.var(dim=-1, keepdim=True) + self.eps).sqrt()
+        # out = (input - input_mean) / (input_std + self.eps)
+        # out = out * self.weight + self.bias
 
         out = out * self.cls_std + self.cls_mean
+
+        return out
+
+    def forward_bn(self, input):
+
+        input_mean = input.mean(dim=-1, keepdim=True)
+        input_std = (input.var(dim=-1, keepdim=True) + self.eps).sqrt()
+        out = (input - input_mean) / (input_std + self.eps)
+
+        out = out + out.mean(dim=(0, 1), keepdim=True)
+
+        out = out * self.weight + self.bias
+
         return out
 
 
@@ -353,7 +371,7 @@ def load_clean_dataset(args, config):
     return train_dataloader
 
 
-def load_base_model(args, config, logger, load_part_seg=False, pretrained=True):
+def load_base_model(args, config, load_part_seg=False, pretrained=True):
     base_model = builder.model_builder(config.model)
     if pretrained:
         base_model.load_model_from_ckpt(args.ckpts)
@@ -362,24 +380,60 @@ def load_base_model(args, config, logger, load_part_seg=False, pretrained=True):
     if args.distributed:
         if args.sync_bn:
             base_model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(base_model)
-            print_log("Using Synchronized BatchNorm ...", logger=logger)
+            # print_log("Using Synchronized BatchNorm ...", logger=logger)
         base_model = nn.parallel.DistributedDataParallel(
             base_model,
             device_ids=[args.local_rank % torch.cuda.device_count()],
             find_unused_parameters=True,
         )
-        print_log("Using Distributed Data parallel ...", logger=logger)
+        # print_log("Using Distributed Data parallel ...", logger=logger)
     else:
-        print_log("Using Data parallel ...", logger=logger)
+        # print_log("Using Data parallel ...", logger=logger)
         base_model = nn.DataParallel(base_model).cuda()
     return base_model
+
+
+def reset_model(args, config, source_model, cls_norms_embedding):
+    model = load_base_model(args, config, pretrained=False)
+    if "cls-fixer" in args.cls_fixer_mode:
+        # replace_batchnorm(base_model.module.class_head, cls_norms_embedding[-2:])
+        replace_layernorm_with_cls_versions(model, cls_norms_embedding)
+    model.load_state_dict(source_model.state_dict())
+
+    model.requires_grad_(False)  # freeze the model
+    if "update_tent" in args.cls_fixer_mode:
+        params = []
+        names = []
+        for nm, m in model.named_modules():
+            if isinstance(m, torch.nn.modules.batchnorm._BatchNorm) or isinstance(
+                m, torch.nn.LayerNorm
+            ):
+                m.requires_grad_(True)
+                for n_p, p in m.named_parameters():
+                    if n_p in [
+                        "weight",
+                        "bias",
+                    ]:  # weight is scale gamma, bias is shift beta
+                        params.append(p)
+                        names.append(f"{nm}.{n_p}")
+
+        optimizer = optim.Adam(
+            params,
+            lr=args.LR,
+            betas=(args.BETA, 0.999),
+            weight_decay=args.WD,
+        )
+    else:
+        optimizer = None
+
+    return model, optimizer
 
 
 def runner(args, config):
     dataset_name = config.dataset.name
     logger = get_logger(args.log_name)
 
-    source_model = load_base_model(args, config, logger)
+    source_model = load_base_model(args, config)
     source_model.eval()
 
     resutl_file_path = os.path.join(
@@ -443,15 +497,9 @@ def eval(
             test_label = []
             entropy_list = []
 
-            base_model = load_base_model(args, config, logger, pretrained=False)
-            if "org_ln" not in args.cls_fixer_mode:
-                # replace_batchnorm(base_model.module.class_head, cls_norms_embedding[-2:])
-                replace_layernorm_with_cls_versions(base_model, cls_norms_embedding)
-            base_model.load_state_dict(source_model.state_dict())
-
-            if "update_tent" in args.cls_fixer_mode:
-                base_model, optimizer = tent_shot_utils.setup_tent_shot(
-                    args, model=base_model, stat_reset=False
+            if args.online:
+                base_model, optimizer = reset_model(
+                    args, config, source_model, cls_norms_embedding
                 )
 
             for idx, (data, labels) in enumerate(tta_loader):
@@ -462,6 +510,11 @@ def eval(
                     data = data.repeat(2, 1, 1)
                     labels = labels.repeat(2, 1)
                 # reset batchnorm running stats
+
+                if ~args.online:
+                    base_model, optimizer = reset_model(
+                        args, config, source_model, cls_norms_embedding
+                    )
 
                 base_model.eval()
 
@@ -489,6 +542,7 @@ def eval(
                 if args.BN_reset:
                     for m in base_model.modules():
                         if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
+                            # m.track_running_stats = False
                             m.running_mean = None  # for original implementation of tent
                             m.running_var = None  # for original implementation of tent
 
@@ -511,29 +565,24 @@ def eval(
                         )
                 elif "update_tent" in args.cls_fixer_mode:
                     base_model.train()
-                    logits = base_model(points)
-                    loss = softmax_entropy(logits).mean()
-                    if "lossmerge" in args.cls_fixer_mode:
-                        if args.batch_size_tta == 1:
-                            raise NotImplementedError(
-                                "tta_batch_size should be > 1 for lossmerge"
-                            )
-                    loss = softmax_entropy(
-                        logits
-                    ).mean()  #   todo compute the entropy for all clip-level predictions   then take the averaga among all samples
-                    loss.backward()
-                    optimizer.step()
-                    optimizer.zero_grad()
+                    for it in range(args.grad_steps):
+                        logits = base_model(points)
+                        loss = softmax_entropy(logits).mean()
 
-                    base_model.eval()
-                    if args.batch_size_tta > 1:
-                        B, N, C = points.shape
-                        points = points.view(args.batch_size_tta, -1, N, C)[0]
-                        labels = labels.view(args.batch_size_tta, -1)[0]
-                    with torch.no_grad():
-                        logits = base_model(
-                            points,
-                        )
+                        loss.backward()
+                        optimizer.step()
+                        optimizer.zero_grad()
+
+                    if not args.online:
+                        base_model.eval()
+                        if args.batch_size_tta > 1:
+                            B, N, C = points.shape
+                            points = points.view(args.batch_size_tta, -1, N, C)[0]
+                            labels = labels.view(args.batch_size_tta, -1)[0]
+                        with torch.no_grad():
+                            logits = base_model(
+                                points,
+                            )
                 else:
                     raise NotImplementedError(
                         f"cls_fixer_mode {args.cls_fixer_mode} not implemented"
