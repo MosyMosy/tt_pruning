@@ -16,6 +16,7 @@ from tools.tta import (
 )
 from tools.tta_unclassified import runner as runner_unclassified
 from tools.tta_intermediate import runner as runner_intermediate
+
 # from tools.tta_x import runner as runner_x
 from tools.tta_token_mask import runner as runner_token_mask
 from tools.tta_layer_prune import runner as runner_layer_prune
@@ -24,6 +25,8 @@ import time
 import os
 import torch
 from tensorboardX import SummaryWriter
+
+import random, numpy as np
 
 
 def main(args):
@@ -128,4 +131,5 @@ def main(args):
 
 if __name__ == "__main__":
     args = parser.get_args()
+
     main(args)

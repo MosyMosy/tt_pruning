@@ -131,11 +131,11 @@ def get_args():
     parser.add_argument("--local_rank", type=int, default=0)
     parser.add_argument("--num_workers", type=int, default=8)
     # seed
-    parser.add_argument("--seed", type=int, default=0, help="random seed")
+    parser.add_argument("--seed", type=int, default=123, help="random seed")
     parser.add_argument(
         "--deterministic",
         action="store_true",
-        help="whether to set deterministic options for CUDNN backend.",
+        help="whether to set deterministic options for CUDNN backend. -1 for random",
     )
     # bn
     parser.add_argument(
@@ -177,6 +177,7 @@ def get_args():
         "--BN_reset",
         action="store_true",
         help="Reset batch norm running statistics similar to TENT",
+        # default=True
     )
 
     parser.add_argument(
@@ -224,7 +225,7 @@ def get_args():
             "update_tent",
             "update_tent_cls-fixer",
         ],
-        default="source_only_cls-fixer",
+        default="update_tent_cls-fixer",
     )
 
     parser.add_argument("--prune_list", nargs="*", type=int, default=[])

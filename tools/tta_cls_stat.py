@@ -136,25 +136,6 @@ class BatchNorm1dWithClsTransform(nn.BatchNorm1d):
             out = out.permute(0, 2, 1)
         return out
 
-    def forward_failed(self, input):
-
-        k = 1.5
-
-        target_var = input.var(dim=0, keepdim=True, unbiased=False)
-        target_mean = input.mean(dim=0, keepdim=True)
-        target_std = torch.sqrt(target_var + self.eps).clamp_min(1e-3)
-        out = (input - target_mean) / (target_std + self.eps)
-
-        mask = (out >= target_mean - k * target_std) & (
-            out <= target_mean + k * target_std
-        )
-
-        out = out * (~mask).float()
-
-        # out = out * self.weight + self.bias
-
-        return out
-
 
 class LayerNormWithClsTransform(nn.LayerNorm):
     def __init__(
@@ -178,49 +159,8 @@ class LayerNormWithClsTransform(nn.LayerNorm):
         self.cls_std = cls_std
         self.out_prototype = out_prototype
 
-    def forward_fail(self, input):
-        # This didn't work for some reason
-
-        input_mean = input.mean(dim=-1, keepdim=True)
-        input_std = (input.var(dim=-1, keepdim=True) + self.eps).sqrt()
-        out = (input - input_mean) / (input_std + self.eps)
-
-        out_mean = out.mean(dim=(0, 1), keepdim=True)
-        out_std = (out.var(dim=(0, 1), keepdim=True) + self.eps).sqrt()
-        out = (out - out_mean) / (out_std + self.eps)
-        # out = out * self.weight + self.bias
-
-        return out
-
-    def forward___(self, input):
-
-        input_mean = input.mean(dim=-1, keepdim=True)
-        input_std = (input.var(dim=-1, keepdim=True) + self.eps).sqrt()
-        out = (input - input_mean) / (input_std + self.eps)
-
-        diff = gaussian_difference(out)
-        diff_mean = diff.mean(dim=(0, 1), keepdim=True)
-        out = out * self.weight + (self.bias - diff_mean)
-
-        return out
-
-    def forward_(self, input):
-
-        input_mean = input.mean(dim=-1, keepdim=True)
-        input_std = (input.var(dim=-1, keepdim=True) + self.eps).sqrt()
-        out = (input - input_mean) / (input_std + self.eps)
-
-        out = out * self.weight + self.bias
-
-        cls_out_mean = out[:, 0:1].mean()
-        cls_out_std = (out[:, 0:1].var() + self.eps).sqrt()
-
-        out = (out - out.mean(dim=-1, keepdim=True)) / (
-            out.std(dim=-1, keepdim=True) + self.eps
-        )
-        out = out * cls_out_std + cls_out_mean
-
-        return out
+        self.norm_gamma = 1
+        self.norm_beta = 0
 
     def forward(self, input):
         # Standard LayerNorm
@@ -232,17 +172,7 @@ class LayerNormWithClsTransform(nn.LayerNorm):
 
         out = out * self.cls_std + self.cls_mean
 
-        return out
-
-    def forward_bn(self, input):
-
-        input_mean = input.mean(dim=-1, keepdim=True)
-        input_std = (input.var(dim=-1, keepdim=True) + self.eps).sqrt()
-        out = (input - input_mean) / (input_std + self.eps)
-
-        out = out + out.mean(dim=(0, 1), keepdim=True)
-
-        out = out * self.weight + self.bias
+        out = out * self.norm_gamma + self.norm_beta
 
         return out
 
@@ -317,6 +247,13 @@ def replace_layernorm_with_cls_versions(
 
 
 def load_tta_dataset(args, config):
+    def seed_worker(worker_id):
+        # Each DataLoader worker must get a distinct but reproducible seed
+        worker_seed = args.seed + worker_id
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+        torch.manual_seed(worker_seed)
+
     # we have 3 choices - every tta_loader returns only point and labels
     root = config.tta_dataset_path  # being lazy - 1
 
@@ -328,6 +265,7 @@ def load_tta_dataset(args, config):
                 batch_size=args.batch_size,
                 shuffle=args.shuffle,
                 drop_last=False,
+                # worker_init_fn=seed_worker,
             )
         else:
             inference_dataset = tta_datasets.ModelNet40C(args, root)
@@ -336,6 +274,7 @@ def load_tta_dataset(args, config):
                 batch_size=args.batch_size,
                 shuffle=args.shuffle,
                 drop_last=False,
+                # worker_init_fn=seed_worker,
             )
 
     elif config.dataset.name == "scanobject":
@@ -345,6 +284,7 @@ def load_tta_dataset(args, config):
             batch_size=args.batch_size,
             shuffle=args.shuffle,
             drop_last=False,
+            # worker_init_fn=seed_worker,
         )
 
     elif config.dataset.name == "shapenetcore":
@@ -354,6 +294,7 @@ def load_tta_dataset(args, config):
             batch_size=args.batch_size,
             shuffle=args.shuffle,
             drop_last=False,
+            # worker_init_fn=seed_worker,
         )
 
     else:
@@ -375,21 +316,21 @@ def load_base_model(args, config, load_part_seg=False, pretrained=True):
     base_model = builder.model_builder(config.model)
     if pretrained:
         base_model.load_model_from_ckpt(args.ckpts)
-    if args.use_gpu:
-        base_model.to(args.local_rank)
-    if args.distributed:
-        if args.sync_bn:
-            base_model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(base_model)
-            # print_log("Using Synchronized BatchNorm ...", logger=logger)
-        base_model = nn.parallel.DistributedDataParallel(
-            base_model,
-            device_ids=[args.local_rank % torch.cuda.device_count()],
-            find_unused_parameters=True,
-        )
-        # print_log("Using Distributed Data parallel ...", logger=logger)
-    else:
-        # print_log("Using Data parallel ...", logger=logger)
-        base_model = nn.DataParallel(base_model).cuda()
+    # if args.use_gpu:
+    #     base_model.to(args.local_rank)
+    # if args.distributed:
+    #     if args.sync_bn:
+    #         base_model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(base_model)
+    #         # print_log("Using Synchronized BatchNorm ...", logger=logger)
+    #     base_model = nn.parallel.DistributedDataParallel(
+    #         base_model,
+    #         device_ids=[args.local_rank % torch.cuda.device_count()],
+    #         find_unused_parameters=True,
+    #     )
+    #     # print_log("Using Distributed Data parallel ...", logger=logger)
+    # else:
+    # print_log("Using Data parallel ...", logger=logger)
+    base_model = base_model.cuda()
     return base_model
 
 
@@ -416,6 +357,31 @@ def reset_model(args, config, source_model, cls_norms_embedding):
                     ]:  # weight is scale gamma, bias is shift beta
                         params.append(p)
                         names.append(f"{nm}.{n_p}")
+            # elif isinstance(m, torch.nn.LayerNorm):
+            #     m.cls_mean = nn.Parameter(
+            #         torch.tensor(
+            #             m.cls_mean,
+            #             dtype=torch.float32,
+            #             device=m.weight.device,
+            #         )
+            #     )
+            #     m.cls_std = nn.Parameter(
+            #         torch.tensor(
+            #             m.cls_std,
+            #             dtype=torch.float32,
+            #             device=m.weight.device,
+            #         )
+            #     )
+            #     # m.requires_grad_(True)
+            #     for n_p, p in m.named_parameters():
+            #         if n_p in [
+            #             "cls_mean",
+            #             "cls_std",
+
+            #         ]:  # weight is scale gamma, bias is shift beta
+            #             p.requires_grad_(True)
+            #             params.append(p)
+            #             names.append(f"{nm}.{n_p}")
 
         optimizer = optim.Adam(
             params,
@@ -426,7 +392,24 @@ def reset_model(args, config, source_model, cls_norms_embedding):
     else:
         optimizer = None
 
+    # Following Tent, reset batchnorm running stats
+    if args.BN_reset:
+        for m in model.modules():
+            if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
+                m.track_running_stats = False
+                m.running_mean = None  # for original implementation of tent
+                m.running_var = None  # for original implementation of tent
+
     return model, optimizer
+
+
+def reset_model_preserve_rng(*args, **kwargs):
+    cpu_state = torch.get_rng_state()
+    cuda_state = torch.cuda.get_rng_state()
+    model, opt = reset_model(*args, **kwargs)
+    torch.set_rng_state(cpu_state)
+    torch.cuda.set_rng_state(cuda_state)
+    return model, opt
 
 
 def runner(args, config):
@@ -466,7 +449,9 @@ def eval(
 ):
     time_list = []
     acc_list = []
-    _, cls_norms_embedding = source_model.module.forward_norms_embedding()
+
+    _, cls_norms_embedding = source_model.forward_norms_embedding()
+
     for args.severity in level:
         for corr_id, args.corruption in enumerate(corruptions):
             start_time = time.time()
@@ -498,58 +483,31 @@ def eval(
             entropy_list = []
 
             if args.online:
-                base_model, optimizer = reset_model(
+                base_model, optimizer = reset_model_preserve_rng(
                     args, config, source_model, cls_norms_embedding
                 )
+                base_model.eval()
 
             for idx, (data, labels) in enumerate(tta_loader):
-                # now inferring on this one sample
-                a = iter(tta_loader)
-                data, labels = next(a)
+
                 if data.shape[0] == 1:
                     data = data.repeat(2, 1, 1)
                     labels = labels.repeat(2, 1)
-                # reset batchnorm running stats
 
-                if ~args.online:
-                    base_model, optimizer = reset_model(
+                if not args.online:
+                    base_model, optimizer = reset_model_preserve_rng(
                         args, config, source_model, cls_norms_embedding
                     )
+                    base_model.eval()
 
-                base_model.eval()
-
-                if data.shape[0] < args.batch_size:
-                    n_repeat = (args.batch_size + data.shape[0] - 1) // data.shape[
-                        0
-                    ]  # Ceiling division
-                    data = data.repeat(n_repeat, 1, 1)[: args.batch_size]
-
-                if labels.shape[0] < args.batch_size:
-                    n_repeat = (args.batch_size + labels.shape[0] - 1) // labels.shape[
-                        0
-                    ]
-                    labels = labels.repeat(n_repeat, 1)[: args.batch_size]
-
-                # if args.distributed:
-                #     data = dist_utils.scatter_tensor(data, args)
-                #     labels = dist_utils.scatter_tensor(labels, args)
-                # else:
-                #     data = data.cuda()
-                #     labels = labels.cuda()
-                # # data = data.cuda()
-
-                # reset batchnorm running stats
-                if args.BN_reset:
-                    for m in base_model.modules():
-                        if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
-                            # m.track_running_stats = False
-                            m.running_mean = None  # for original implementation of tent
-                            m.running_var = None  # for original implementation of tent
+                if data.shape[0] == 1:
+                    data = data.repeat(2, 1, 1)
+                    labels = labels.repeat(2, 1)
 
                 points = data.cuda()
                 labels = labels.cuda()
                 points = [
-                    misc.fps(points, config.npoints, random_start_point=True)
+                    misc.fps(points, config.npoints, random_start_point=False)
                     for _ in range(args.batch_size_tta)
                 ]
                 points = torch.cat(points, dim=0)
@@ -564,6 +522,7 @@ def eval(
                             points,
                         )
                 elif "update_tent" in args.cls_fixer_mode:
+                    base_model.zero_grad()
                     base_model.train()
                     for it in range(args.grad_steps):
                         logits = base_model(points)
