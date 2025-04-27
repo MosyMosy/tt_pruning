@@ -26,34 +26,6 @@ level = [5]
 # Helper Functions
 # =====================
 
-
-def gaussian_difference(x: torch.Tensor, eps: float = 1e-5):
-    if len(x.shape) == 2:
-        B, d = x.shape
-    elif len(x.shape) == 3:
-        B, N, d = x.shape
-    else:
-        raise ValueError("Input tensor must be 2D or 3D")
-
-    x_flat = x.view(-1, d)
-    x_sorted, sort_idx = x_flat.sort(dim=1)
-    reverse_idx = sort_idx.argsort(dim=1)
-
-    mean = x_flat.mean(dim=1, keepdim=True)
-    std = x_flat.std(dim=1, keepdim=True)
-
-    z = torch.linspace(eps, 1 - eps, steps=d, device=x.device)
-    target_gauss = torch.sqrt(torch.tensor(2.0, device=x.device)) * torch.erfinv(
-        2 * z - 1
-    )
-    target_gauss = target_gauss.unsqueeze(0) * std + mean
-
-    delta_sorted = x_sorted - target_gauss
-    delta = torch.gather(delta_sorted, dim=1, index=reverse_idx)
-
-    return delta.view(*x.shape)
-
-
 @torch.jit.script
 def softmax_entropy(x: torch.Tensor, dim: int = -1) -> torch.Tensor:
     return -(x.softmax(dim) * x.log_softmax(dim)).sum(dim)

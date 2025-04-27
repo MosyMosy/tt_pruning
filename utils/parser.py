@@ -225,7 +225,7 @@ def get_args():
             "update_tent",
             "update_tent_cls-fixer",
         ],
-        default="update_tent_cls-fixer",
+        default="source_only_cls-fixer",
     )
 
     parser.add_argument("--prune_list", nargs="*", type=int, default=[])
