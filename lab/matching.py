@@ -66,15 +66,15 @@ def save_colored_point_clouds(
     o3d.io.write_point_cloud(filename_2, pcd2)
 
 
-matchings = torch.load("/home/moslem/Downloads/matchings_0_0.pt")
+matchings = torch.load("/home/moslem/Downloads/matchings.pt")
 k = 10  # Number of distinct matchings
-out_dir = "lab/colored_pcs_0_0"
+out_dir = "lab/colored_pcs"
 if not os.path.exists(out_dir):
     os.makedirs(out_dir)
 
-points1 = matchings["pts1"]#[10824:10851]  # (B, N, 3)
-points2 = matchings["pred_pts"]#[10824:10851]  # (B, N, 3)
-scores = matchings["assignment_score"]#[10824:10851]  # (B, N)
+points1 = matchings["pts1"][10824:10851]  # (B, N, 3)
+points2 = matchings["pred_pts"][10824:10851]  # (B, N, 3)
+scores = matchings["assignment_score"][10824:10851]  # (B, N)
 
 sorted_indices = torch.argsort(scores, dim=-1, descending=True)
 

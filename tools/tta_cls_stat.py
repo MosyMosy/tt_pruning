@@ -26,9 +26,31 @@ level = [5]
 # Helper Functions
 # =====================
 
+
 @torch.jit.script
 def softmax_entropy(x: torch.Tensor, dim: int = -1) -> torch.Tensor:
     return -(x.softmax(dim) * x.log_softmax(dim)).sum(dim)
+
+
+# Jensen-Shannon divergence between two univariate Gaussians
+def kl_divergence_gaussians(mu_p, sigma_p, mu_q, sigma_q):
+    term1 = torch.log(sigma_q / sigma_p)
+    term2 = (sigma_p**2 + (mu_p - mu_q) ** 2) / (2 * sigma_q**2)
+    return term1 + term2 - 0.5
+
+
+def jensen_shannon_divergence_gaussians(mu_p, sigma_p, mu_q, sigma_q):
+    mu_m = (mu_p + mu_q) / 2
+    sigma_m = torch.sqrt((sigma_p**2 + sigma_q**2) / 2)
+
+    kl_p_m = kl_divergence_gaussians(mu_p, sigma_p, mu_m, sigma_m)
+    kl_q_m = kl_divergence_gaussians(mu_q, sigma_q, mu_m, sigma_m)
+
+    return 0.5 * (kl_p_m + kl_q_m)
+
+
+def wasserstein_distance_gaussians(mu_p, sigma_p, mu_q, sigma_q):
+    return torch.sqrt((mu_p - mu_q) ** 2 + (sigma_p - sigma_q) ** 2)
 
 
 # =====================
@@ -119,13 +141,10 @@ class LayerNormWithClsTransform(nn.LayerNorm):
         self.cls_mean = cls_mean
         self.cls_std = cls_std
         self.out_prototype = out_prototype
-        self.norm_gamma = 1
-        self.norm_beta = 0
 
     def forward(self, input):
         out = super().forward(input)
         out = out * self.cls_std + self.cls_mean
-        out = out * self.norm_gamma + self.norm_beta
         return out
 
 
@@ -269,6 +288,7 @@ def reset_model(args, config, source_model, cls_norms_embedding):
                 for n_p, p in m.named_parameters():
                     if n_p in ["weight", "bias"]:
                         params.append(p)
+
         optimizer = optim.Adam(
             params, lr=args.LR, betas=(args.BETA, 0.999), weight_decay=args.WD
         )
@@ -322,7 +342,10 @@ def eval(args, config, logger, source_model, result_file_path):
     time_list = []
     acc_list = []
 
-    _, cls_norms_embedding = source_model.forward_norms_embedding()
+    cls_pred, cls_norms_embedding, block_cls_embedding = (
+        source_model.forward_norms_embedding()
+    )
+    block_cls_embedding = torch.stack(block_cls_embedding, dim=0).detach()
 
     for args.severity in level:
         for corr_id, args.corruption in enumerate(corruptions):
@@ -375,11 +398,13 @@ def eval(args, config, logger, source_model, result_file_path):
                     base_model.eval()
                     with torch.no_grad():
                         logits = base_model(points)
+
                 elif "update_tent" in args.cls_fixer_mode:
                     base_model.train()
                     base_model.zero_grad()
                     for _ in range(args.grad_steps):
                         logits = base_model(points)
+
                         loss = softmax_entropy(logits).mean()
                         loss.backward()
                         optimizer.step()

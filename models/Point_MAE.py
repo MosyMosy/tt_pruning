@@ -116,7 +116,9 @@ class Group(nn.Module):
         )  # idx_base  (8, 1, 1)
         idx = idx + idx_base  # for  batch 0 offset 0,   batch 1 ~7,  offset  1*2048
         idx = idx.view(-1)
-        neighborhood = xyz.view(batch_size * num_points, -1)[
+        neighborhood = xyz.view(
+            batch_size * num_points, -1
+        )[
             idx, :
         ]  # (8, 2048, 3) -> (8*2048, 3)   # todo sampling the neighborhoold points for each center in each batch
         neighborhood = neighborhood.view(
@@ -154,6 +156,39 @@ class Mlp(nn.Module):
         return x
 
 
+def kl_divergence_gaussians(mu_p, sigma_p, mu_q, sigma_q):
+    """
+    KL divergence D_KL(P || Q) for (B, N) and (B, 1) tensors.
+    Output: (B, N)
+    """
+    term1 = torch.log(sigma_q / sigma_p)  # (B, N)
+    term2 = (sigma_p**2 + (mu_p - mu_q) ** 2) / (2 * sigma_q**2)  # (B, N)
+    return term1 + term2 - 0.5
+
+
+def wasserstein_distance_gaussians(mu_p, sigma_p, mu_q, sigma_q):
+    """
+    Wasserstein-2 distance for (B, N) and (B, 1) tensors.
+    Output: (B, N)
+    """
+    return torch.sqrt((mu_p - mu_q) ** 2 + (sigma_p - sigma_q) ** 2)
+
+
+def jensen_shannon_divergence_gaussians(mu_p, sigma_p, mu_q, sigma_q):
+    """
+    Jensen-Shannon divergence for (B, N) and (B, 1) tensors.
+    Output: (B, N)
+    """
+    # Mid distribution
+    mu_m = (mu_p + mu_q) / 2  # (B, N)
+    sigma_m = torch.sqrt((sigma_p**2 + sigma_q**2) / 2)  # (B, N)
+
+    kl_p_m = kl_divergence_gaussians(mu_p, sigma_p, mu_m, sigma_m)  # (B, N)
+    kl_q_m = kl_divergence_gaussians(mu_q, sigma_q, mu_m, sigma_m)  # (B, N)
+
+    return 0.5 * (kl_p_m + kl_q_m)
+
+
 class Attention(nn.Module):
     def __init__(
         self,
@@ -189,6 +224,46 @@ class Attention(nn.Module):
 
         attn = (q @ k.transpose(-2, -1)) * self.scale
         attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
+
+    def forward_weight(self, x):
+        B, N, C = x.shape
+        qkv = (
+            self.qkv(x)
+            .reshape(B, N, 3, self.num_heads, C // self.num_heads)
+            .permute(2, 0, 3, 1, 4)
+        )
+        q, k, v = (
+            qkv[0],
+            qkv[1],
+            qkv[2],
+        )  # make torchscript happy (cannot use tensor as tuple)
+
+        stat_distance_q = wasserstein_distance_gaussians(
+            q[:, :, 0:1, :].mean(dim=-1),
+            q[:, :, 0:1, :].std(dim=-1),
+            q.mean(dim=-1),
+            q.std(dim=-1),
+        )
+        stat_distance_k = wasserstein_distance_gaussians(
+            k[:, :, 0:1, :].mean(dim=-1),
+            k[:, :, 0:1, :].std(dim=-1),
+            k.mean(dim=-1),
+            k.std(dim=-1),
+        )
+        stat_sim_q = torch.exp(-1 * stat_distance_q).unsqueeze(-1)
+        stat_sim_k = torch.exp(-1 * stat_distance_k).unsqueeze(-1)
+        # stat_sim_q = 1 / (1 + stat_distance_q).unsqueeze(-1)
+        # stat_sim_k = 1 / (1 + stat_distance_k).unsqueeze(-1)
+        stat_sim_attn = stat_sim_q @ stat_sim_k.transpose(-2, -1)
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1) * stat_sim_attn
         attn = self.attn_drop(attn)
 
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
@@ -258,12 +333,9 @@ class Attention(nn.Module):
         # Replace random noise to high entropy tokens
         # first mask the diagonal of the attention matrix
         H = attn.shape[1]  # number of heads
-        diag_mask = (
-            ~torch.eye(N, dtype=torch.bool, device=attn.device)
-            .unsqueeze(0)
-            .unsqueeze(0)
-            .expand(B, H, N, N)
-        )
+        diag_mask = ~torch.eye(N, dtype=torch.bool, device=attn.device).unsqueeze(
+            0
+        ).unsqueeze(0).expand(B, H, N, N)
         attn_no_diag = attn  # .masked_select(diag_mask).view(B, H, N, N - 1)
         attn_no_diag = attn_no_diag.softmax(dim=-1)
         attn_entropy = -(attn_no_diag * attn_no_diag.clamp(min=1e-8).log()).sum(dim=-1)
@@ -334,6 +406,11 @@ class Block(nn.Module):
 
     def forward(self, x):
         x = x + self.drop_path(self.attn(self.norm1(x)))
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        return x
+
+    def forward_weight(self, x):
+        x = x + self.drop_path(self.attn.forward_weight(self.norm1(x)))
         x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x
 
@@ -410,6 +487,13 @@ class TransformerEncoder(nn.Module):
         for i, block in enumerate(self.blocks):
             x = block(x + pos)
         return x, None
+
+    def forward_intermediate_cls(self, x, pos):
+        intermediate_cls = []
+        for i, block in enumerate(self.blocks):
+            x = block(x + pos)
+            intermediate_cls.append(x[:, 0, :])
+        return x, intermediate_cls
 
     def forward_out_intermediate(self, x, pos):
         intermediates = []
@@ -598,10 +682,12 @@ class TransformerEncoder(nn.Module):
 
     def forward_norms_embedding(self, x, pos):
         norms_embedding_list = []
+        intermediate_cls_list = []
         for i, block in enumerate(self.blocks):
-            x, norms_embedding = block.forward_norms_embedding(x)
+            x, norms_embedding = block.forward_norms_embedding(x + pos)
             norms_embedding_list += norms_embedding
-        return x, norms_embedding_list
+            intermediate_cls_list += x[:, 0, :]
+        return x, norms_embedding_list, intermediate_cls_list
 
 
 @MODELS.register_module()
@@ -758,6 +844,23 @@ class PointTransformer(nn.Module):
         concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
         ret = self.class_head(concat_f)
         return ret
+
+    def forward_intermediate_cls(self, pts):
+        neighborhood, center = self.group_divider(pts)
+        group_input_tokens = self.encoder(neighborhood)  # B G N
+        cls_tokens = self.cls_token.expand(group_input_tokens.size(0), -1, -1)
+        cls_pos = self.cls_pos.expand(group_input_tokens.size(0), -1, -1)
+
+        pos = self.pos_embed(center)
+
+        x = torch.cat((cls_tokens, group_input_tokens), dim=1)
+        pos = torch.cat((cls_pos, pos), dim=1)
+        # transformer
+        x, intermediate_cls = self.blocks.forward_intermediate_cls(x, pos)
+        x = self.norm(x)
+        concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
+        ret = self.class_head(concat_f)
+        return ret, intermediate_cls
 
     def forward_out_intermediate(self, pts):
         neighborhood, center = self.group_divider(pts)
@@ -978,7 +1081,7 @@ class PointTransformer(nn.Module):
         # x = torch.cat((cls_tokens, group_input_tokens), dim=1)
         # pos = torch.cat((cls_pos, pos), dim=1)
         # transformer
-        x, norms_embedding = self.blocks.forward_norms_embedding(
+        x, norms_embedding, intermediate_cls_list = self.blocks.forward_norms_embedding(
             self.cls_token, self.cls_pos
         )
         x = self.norm(x)
@@ -997,7 +1100,7 @@ class PointTransformer(nn.Module):
         head_embbeding = self.class_head[7](head_embbeding)
         ret = self.class_head[8](head_embbeding)
         # ret = self.class_head(concat_f)
-        return ret, norms_embedding
+        return ret, norms_embedding, intermediate_cls_list
 
 
 @MODELS.register_module()
