@@ -31,28 +31,6 @@ level = [5]
 def softmax_entropy(x: torch.Tensor, dim: int = -1) -> torch.Tensor:
     return -(x.softmax(dim) * x.log_softmax(dim)).sum(dim)
 
-
-# Jensen-Shannon divergence between two univariate Gaussians
-def kl_divergence_gaussians(mu_p, sigma_p, mu_q, sigma_q):
-    term1 = torch.log(sigma_q / sigma_p)
-    term2 = (sigma_p**2 + (mu_p - mu_q) ** 2) / (2 * sigma_q**2)
-    return term1 + term2 - 0.5
-
-
-def jensen_shannon_divergence_gaussians(mu_p, sigma_p, mu_q, sigma_q):
-    mu_m = (mu_p + mu_q) / 2
-    sigma_m = torch.sqrt((sigma_p**2 + sigma_q**2) / 2)
-
-    kl_p_m = kl_divergence_gaussians(mu_p, sigma_p, mu_m, sigma_m)
-    kl_q_m = kl_divergence_gaussians(mu_q, sigma_q, mu_m, sigma_m)
-
-    return 0.5 * (kl_p_m + kl_q_m)
-
-
-def wasserstein_distance_gaussians(mu_p, sigma_p, mu_q, sigma_q):
-    return torch.sqrt((mu_p - mu_q) ** 2 + (sigma_p - sigma_q) ** 2)
-
-
 # =====================
 # Custom Normalization Layers
 # =====================
