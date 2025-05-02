@@ -31,78 +31,10 @@ level = [5]
 def softmax_entropy(x: torch.Tensor, dim: int = -1) -> torch.Tensor:
     return -(x.softmax(dim) * x.log_softmax(dim)).sum(dim)
 
+
 # =====================
 # Custom Normalization Layers
 # =====================
-
-
-class BatchNorm1dWithClsTransform(nn.BatchNorm1d):
-    def __init__(
-        self,
-        num_features,
-        eps=1e-5,
-        momentum=0.1,
-        affine=True,
-        track_running_stats=True,
-        cls_mean=None,
-        cls_std=None,
-    ):
-        super().__init__(num_features, eps, momentum, affine, track_running_stats)
-        self.cls_mean = cls_mean
-        self.cls_std = cls_std
-
-    def forward_(self, input):
-        target_mean = input.mean(dim=0, keepdim=True)
-        target_std = torch.sqrt(
-            input.var(dim=0, keepdim=True, unbiased=False) + self.eps
-        ).clamp_min(1e-3)
-
-        source_mean = self.running_mean.unsqueeze(0)
-        source_std = torch.sqrt(self.running_var + self.eps).unsqueeze(0)
-
-        gamma = self.weight.unsqueeze(0)
-        beta = self.bias.unsqueeze(0)
-
-        a = source_std / target_std
-        b = (source_mean - target_mean) / target_std
-
-        gamma_new = gamma * a
-        beta_new = beta + gamma * b
-
-        normalized_target = (input - target_mean) / (target_std + self.eps)
-        out = normalized_target * gamma + beta
-        out = out * self.cls_std + self.cls_mean
-        return out
-
-    def forward__(self, input):
-        target_std = torch.sqrt(
-            input.var(dim=0, keepdim=True, unbiased=False) + self.eps
-        ).clamp_min(1e-3)
-        target_mean = input.mean(dim=0, keepdim=True)
-
-        out = (input - target_mean) / (target_std + self.eps)
-        diff = gaussian_difference(out).mean(dim=(0, 1), keepdim=True)
-
-        out = out * self.weight + (self.bias - diff)
-        return out
-
-    def forward_main(self, input):
-        in_dim = input.dim()
-        if in_dim == 3:
-            input = input.permute(0, 2, 1)
-
-        target_std = torch.sqrt(
-            input.var(dim=tuple(range(in_dim - 1)), keepdim=True, unbiased=False)
-            + self.eps
-        )
-        target_mean = input.mean(dim=tuple(range(in_dim - 1)), keepdim=True)
-
-        out = (input - target_mean) / (target_std + self.eps)
-        out = out * self.weight + self.bias
-
-        if in_dim == 3:
-            out = out.permute(0, 2, 1)
-        return out
 
 
 class LayerNormWithClsTransform(nn.LayerNorm):
@@ -124,39 +56,6 @@ class LayerNormWithClsTransform(nn.LayerNorm):
         out = super().forward(input)
         out = out * self.cls_std + self.cls_mean
         return out
-
-
-# =====================
-# Model Modification Utilities
-# =====================
-
-
-def replace_batchnorm(model, cls_norms_embedding):
-    device = next(model.parameters()).device
-    idx = 0
-
-    def _recursive_replace(module):
-        nonlocal idx
-        for name, child in module.named_children():
-            if isinstance(child, nn.BatchNorm1d):
-                new_module = BatchNorm1dWithClsTransform(
-                    num_features=child.num_features,
-                    eps=child.eps,
-                    momentum=child.momentum,
-                    affine=child.affine,
-                    track_running_stats=child.track_running_stats,
-                    cls_mean=cls_norms_embedding[idx].mean().item(),
-                    cls_std=cls_norms_embedding[idx].std().item(),
-                )
-                setattr(module, name, new_module.to(device))
-                idx += 1
-            else:
-                _recursive_replace(child)
-
-    if isinstance(model, nn.DataParallel):
-        model = model.module
-
-    _recursive_replace(model)
 
 
 def replace_layernorm_with_cls_versions(
@@ -266,6 +165,7 @@ def reset_model(args, config, source_model, cls_norms_embedding):
                 for n_p, p in m.named_parameters():
                     if n_p in ["weight", "bias"]:
                         params.append(p)
+                        p.requires_grad_(True)
 
         optimizer = optim.Adam(
             params, lr=args.LR, betas=(args.BETA, 0.999), weight_decay=args.WD
@@ -379,11 +279,10 @@ def eval(args, config, logger, source_model, result_file_path):
 
                 elif "update_tent" in args.cls_fixer_mode:
                     base_model.train()
-                    base_model.zero_grad()
                     for _ in range(args.grad_steps):
                         logits = base_model(points)
 
-                        loss = softmax_entropy(logits).mean()
+                        loss = -softmax_entropy(logits).mean()
                         loss.backward()
                         optimizer.step()
                         optimizer.zero_grad()
