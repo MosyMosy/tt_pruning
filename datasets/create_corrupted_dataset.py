@@ -7,7 +7,8 @@ from numpy import random
 import open3d as o3d
 import re
 import argparse
-from pygem import FFD, RBF
+
+# from pygem import FFD, RBF
 import glob
 import pickle
 
@@ -17,18 +18,28 @@ import pickle
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', type=str, default="modelnet40")
-    parser.add_argument('--main_path', type=str, default="./data/")
-    parser.add_argument('--dataset_path', type=str)
-    parser.add_argument('--corrupted_dataset_path', type=str)
-    parser.add_argument('--create_mesh', action='store_true', default=False, help='Create meshes out of pointclouds')
+    parser.add_argument("--dataset", type=str, default="scanobject")
+    parser.add_argument(
+        "--main_path", type=str, default="/home/moslem/projects/dataset/tta/clean/"
+    )
+    parser.add_argument("--dataset_path", type=str)
+    parser.add_argument(
+        "--corrupted_dataset_path",
+        type=str,
+        default="/home/moslem/projects/dataset/tta/corrupted_new",
+    )
+    parser.add_argument(
+        "--create_mesh",
+        action="store_true",
+        default=False,
+        help="Create meshes out of pointclouds",
+    )
 
     return parser.parse_args()
 
 
-def natural_sort_key(s, _nsre=re.compile('([0-9]+)')):
-    return [int(text) if text.isdigit() else text.lower()
-            for text in _nsre.split(s)]
+def natural_sort_key(s, _nsre=re.compile("([0-9]+)")):
+    return [int(text) if text.isdigit() else text.lower() for text in _nsre.split(s)]
 
 
 def load_mesh(filepath):
@@ -63,8 +74,11 @@ def normalize(new_pc):
     new_pc[:, 1] -= (np.max(new_pc[:, 1]) + np.min(new_pc[:, 1])) / 2
     new_pc[:, 2] -= (np.max(new_pc[:, 2]) + np.min(new_pc[:, 2])) / 2
     epsilon = 1e-10
-    leng_x, leng_y, leng_z = np.max(new_pc[:, 0]) - np.min(new_pc[:, 0]), np.max(new_pc[:, 1]) - np.min(
-        new_pc[:, 1]), np.max(new_pc[:, 2]) - np.min(new_pc[:, 2])
+    leng_x, leng_y, leng_z = (
+        np.max(new_pc[:, 0]) - np.min(new_pc[:, 0]),
+        np.max(new_pc[:, 1]) - np.min(new_pc[:, 1]),
+        np.max(new_pc[:, 2]) - np.min(new_pc[:, 2]),
+    )
     if leng_x >= leng_y and leng_x >= leng_z:
         ratio = 2.0 / (leng_x + epsilon)
     elif leng_y >= leng_x and leng_y >= leng_z:
@@ -79,7 +93,9 @@ def appendSpherical_np(xyz):
     ptsnew = np.hstack((xyz, np.zeros(xyz.shape)))
     xy = xyz[:, 0] ** 2 + xyz[:, 1] ** 2
     ptsnew[:, 3] = np.sqrt(xy + xyz[:, 2] ** 2)
-    ptsnew[:, 4] = np.arctan2(np.sqrt(xy), xyz[:, 2])  # for elevation angle defined from Z-axis down
+    ptsnew[:, 4] = np.arctan2(
+        np.sqrt(xy), xyz[:, 2]
+    )  # for elevation angle defined from Z-axis down
     # ptsnew[:,4] = np.arctan2(xyz[:,2], np.sqrt(xy)) # for elevation angle defined from XY-plane up
     ptsnew[:, 5] = np.arctan2(xyz[:, 1], xyz[:, 0])
     return ptsnew
@@ -97,24 +113,40 @@ def lidar_pose(severity):
     """generate a random LiDAR pose"""
     theta = 2 * np.pi * severity / 5
     delta = np.pi / 5
-    angle_x = 5. / 8. * np.pi
+    angle_x = 5.0 / 8.0 * np.pi
     angle_y = 0
     angle_z = np.random.uniform(theta - delta, theta + delta)
-    Rx = np.array([[1, 0, 0],
-                   [0, np.cos(angle_x), -np.sin(angle_x)],
-                   [0, np.sin(angle_x), np.cos(angle_x)]])
-    Ry = np.array([[np.cos(angle_y), 0, np.sin(angle_y)],
-                   [0, 1, 0],
-                   [-np.sin(angle_y), 0, np.cos(angle_y)]])
-    Rz = np.array([[np.cos(angle_z), -np.sin(angle_z), 0],
-                   [np.sin(angle_z), np.cos(angle_z), 0],
-                   [0, 0, 1]])
+    Rx = np.array(
+        [
+            [1, 0, 0],
+            [0, np.cos(angle_x), -np.sin(angle_x)],
+            [0, np.sin(angle_x), np.cos(angle_x)],
+        ]
+    )
+    Ry = np.array(
+        [
+            [np.cos(angle_y), 0, np.sin(angle_y)],
+            [0, 1, 0],
+            [-np.sin(angle_y), 0, np.cos(angle_y)],
+        ]
+    )
+    Rz = np.array(
+        [
+            [np.cos(angle_z), -np.sin(angle_z), 0],
+            [np.sin(angle_z), np.cos(angle_z), 0],
+            [0, 0, 1],
+        ]
+    )
     R = np.dot(Rz, np.dot(Ry, Rx))
     # a rotation matrix with arbitrarily chosen yaw, pitch, roll
     # Set camera pointing to the origin and 1 unit away from the origin
-    t = np.expand_dims(-R[:, 2] * 5, 1)  # select the third column, reshape into (3, 1)-vector
+    t = np.expand_dims(
+        -R[:, 2] * 5, 1
+    )  # select the third column, reshape into (3, 1)-vector
     pose = np.concatenate([np.concatenate([R, t], 1), [[0, 0, 0, 1]]], 0)
-    matrix = np.concatenate([np.concatenate([R.T, -np.dot(R.T, t)], 1), [[0, 0, 0, 1]]], 0)
+    matrix = np.concatenate(
+        [np.concatenate([R.T, -np.dot(R.T, t)], 1), [[0, 0, 0, 1]]], 0
+    )
     return matrix, pose
 
 
@@ -123,24 +155,40 @@ def random_pose(severity):
 
     theta = 2 * np.pi * severity / 5
     delta = np.pi / 5
-    angle_x = np.random.uniform(2. / 3. * np.pi, 5. / 6. * np.pi)
+    angle_x = np.random.uniform(2.0 / 3.0 * np.pi, 5.0 / 6.0 * np.pi)
     angle_y = 0
     angle_z = np.random.uniform(theta - delta, theta + delta)
-    Rx = np.array([[1, 0, 0],
-                   [0, np.cos(angle_x), -np.sin(angle_x)],
-                   [0, np.sin(angle_x), np.cos(angle_x)]])
-    Ry = np.array([[np.cos(angle_y), 0, np.sin(angle_y)],
-                   [0, 1, 0],
-                   [-np.sin(angle_y), 0, np.cos(angle_y)]])
-    Rz = np.array([[np.cos(angle_z), -np.sin(angle_z), 0],
-                   [np.sin(angle_z), np.cos(angle_z), 0],
-                   [0, 0, 1]])
+    Rx = np.array(
+        [
+            [1, 0, 0],
+            [0, np.cos(angle_x), -np.sin(angle_x)],
+            [0, np.sin(angle_x), np.cos(angle_x)],
+        ]
+    )
+    Ry = np.array(
+        [
+            [np.cos(angle_y), 0, np.sin(angle_y)],
+            [0, 1, 0],
+            [-np.sin(angle_y), 0, np.cos(angle_y)],
+        ]
+    )
+    Rz = np.array(
+        [
+            [np.cos(angle_z), -np.sin(angle_z), 0],
+            [np.sin(angle_z), np.cos(angle_z), 0],
+            [0, 0, 1],
+        ]
+    )
     R = np.dot(Rz, np.dot(Ry, Rx))
     # a rotation matrix with arbitrarily chosen yaw, pitch, roll
     # Set camera pointing to the origin and 1 unit away from the origin
-    t = np.expand_dims(-R[:, 2] * 3., 1)  # select the third column, reshape into (3, 1)-vector
+    t = np.expand_dims(
+        -R[:, 2] * 3.0, 1
+    )  # select the third column, reshape into (3, 1)-vector
 
-    matrix = np.concatenate([np.concatenate([R.T, -np.dot(R.T, t)], 1), [[0, 0, 0, 1]]], 0)
+    matrix = np.concatenate(
+        [np.concatenate([R.T, -np.dot(R.T, t)], 1), [[0, 0, 0, 1]]], 0
+    )
     return matrix
 
 
@@ -165,10 +213,7 @@ def set_points(data, points):
 
 
 def get_default_camera_extrinsic():
-    return np.array([[1, 0, 0, 1],
-                     [0, 1, 0, 0],
-                     [0, 0, 1, 2],
-                     [0, 0, 0, 1]])
+    return np.array([[1, 0, 0, 1], [0, 1, 0, 0], [0, 0, 1, 2], [0, 0, 0, 1]])
 
 
 def get_default_camera_intrinsic(width=1920, height=1080):
@@ -178,7 +223,7 @@ def get_default_camera_intrinsic(width=1920, height=1080):
         "fx": 365,
         "fy": 365,
         "cx": width / 2 - 0.5,
-        "cy": height / 2 - 0.5
+        "cy": height / 2 - 0.5,
     }
 
 
@@ -192,28 +237,34 @@ def get_meshes(args):
         f_1.close()
         meshes_sorted = []
         for item in lsit_0 + lsit_1:
-            folder = item.split('/')[0]
-            mesh = item.split('/')[1][:-3] + 'off'
+            folder = item.split("/")[0]
+            mesh = item.split("/")[1][:-3] + "off"
             meshes_sorted.append("./data/ModelNet40/" + folder + "/test/" + mesh)
     else:
         mesh_dir = args.dataset_path + "test_meshes/"
-        all_meshes = [mesh_dir + f for f in os.listdir(mesh_dir) if os.path.isfile(mesh_dir + f)]
-        meshes_sorted = sorted(all_meshes,
-                               key=lambda x: [int(t) if t.isdigit() else t.lower() for t in re.split('(\d+)', x)])
+        all_meshes = [
+            mesh_dir + f for f in os.listdir(mesh_dir) if os.path.isfile(mesh_dir + f)
+        ]
+        meshes_sorted = sorted(
+            all_meshes,
+            key=lambda x: [
+                int(t) if t.isdigit() else t.lower() for t in re.split("(\d+)", x)
+            ],
+        )
     return meshes_sorted
 
 
 def core_distortion(points, n_control_points=[2, 2, 2], displacement=None):
     """
-        Ref: http://mathlab.github.io/PyGeM/tutorial-1-ffd.html
+    Ref: http://mathlab.github.io/PyGeM/tutorial-1-ffd.html
     """
     # the size of displacement matrix: 3 * control_points.shape
     if displacement is None:
         displacement = np.zeros((3, *n_control_points))
 
     ffd = FFD(n_control_points=n_control_points)
-    ffd.box_length = [2., 2., 2.]
-    ffd.box_origin = [-1., -1., -1.]
+    ffd.box_length = [2.0, 2.0, 2.0]
+    ffd.box_origin = [-1.0, -1.0, -1.0]
     ffd.array_mu_x = displacement[0, :, :, :]
     ffd.array_mu_y = displacement[1, :, :, :]
     ffd.array_mu_z = displacement[2, :, :, :]
@@ -222,19 +273,29 @@ def core_distortion(points, n_control_points=[2, 2, 2], displacement=None):
     return new_points
 
 
-def distortion(points, direction_mask=np.array([1, 1, 1]), point_mask=np.ones((5, 5, 5)), severity=0.5):
+def distortion(
+    points,
+    direction_mask=np.array([1, 1, 1]),
+    point_mask=np.ones((5, 5, 5)),
+    severity=0.5,
+):
     n_control_points = [5, 5, 5]
     # random
-    displacement = np.random.rand(3, *n_control_points) * 2 * severity - np.ones((3, *n_control_points)) * severity
+    displacement = (
+        np.random.rand(3, *n_control_points) * 2 * severity
+        - np.ones((3, *n_control_points)) * severity
+    )
     displacement *= np.transpose(np.tile(direction_mask, (5, 5, 5, 1)), (3, 0, 1, 2))
     displacement *= np.tile(point_mask, (3, 1, 1, 1))
 
-    points = core_distortion(points, n_control_points=n_control_points, displacement=displacement)
+    points = core_distortion(
+        points, n_control_points=n_control_points, displacement=displacement
+    )
 
     return points
 
 
-def distortion_2(points, severity=(0.4, 3), func='gaussian_spline'):
+def distortion_2(points, severity=(0.4, 3), func="gaussian_spline"):
     rbf = RBF(func=func)
     xv = np.linspace(-1, 1, severity[1])
     yv = np.linspace(-1, 1, severity[1])
@@ -263,7 +324,15 @@ def visualize_point_cloud(data, mesh=False):
     o3d.visualization.draw_geometries([point_cloud])
 
 
-def occlusion_1(mesh, type, severity, window_width=1080, window_height=720, n_points=None, downsample_ratio=None):
+def occlusion_1(
+    mesh,
+    type,
+    severity,
+    window_width=1080,
+    window_height=720,
+    n_points=None,
+    downsample_ratio=None,
+):
     points = get_points(mesh)
     points = normalize(points)
     set_points(mesh, points)
@@ -273,14 +342,21 @@ def occlusion_1(mesh, type, severity, window_width=1080, window_height=720, n_po
 
     initial = True
     while initial or points.shape[0] == 0:
-        if type == 'occlusion':
+        if type == "occlusion":
             camera_extrinsic = random_pose(severity)
-        elif type == 'lidar':
+        elif type == "lidar":
             camera_extrinsic, pose = lidar_pose(severity)
         camera_intrinsic = get_default_camera_intrinsic(window_width, window_height)
-        pcd = core_occlusion(mesh, type, camera_extrinsic=camera_extrinsic, camera_intrinsic=camera_intrinsic,
-                             window_width=window_width, window_height=window_height, n_points=n_points,
-                             downsample_ratio=downsample_ratio)
+        pcd = core_occlusion(
+            mesh,
+            type,
+            camera_extrinsic=camera_extrinsic,
+            camera_intrinsic=camera_intrinsic,
+            window_width=window_width,
+            window_height=window_height,
+            n_points=n_points,
+            downsample_ratio=downsample_ratio,
+        )
         initial = False
         points = get_points(pcd)
 
@@ -291,7 +367,7 @@ def occlusion_1(mesh, type, severity, window_width=1080, window_height=720, n_po
     # visualize_point_cloud(points)
     # points = normalize(points)
     # points = denomalize(points, scale, offset)
-    if type == 'lidar':
+    if type == "lidar":
         return points[:n_points, :], pose
     else:
         return points[:n_points, :]
@@ -303,8 +379,16 @@ def shuffle_data(data):
     return data[idx, ...]
 
 
-def core_occlusion(mesh, type, camera_extrinsic=None, camera_intrinsic=None, window_width=1080, window_height=720,
-                   n_points=None, downsample_ratio=None):
+def core_occlusion(
+    mesh,
+    type,
+    camera_extrinsic=None,
+    camera_intrinsic=None,
+    window_width=1080,
+    window_height=720,
+    n_points=None,
+    downsample_ratio=None,
+):
     if camera_extrinsic is None:
         camera_extrinsic = get_default_camera_extrinsic()
 
@@ -326,8 +410,9 @@ def core_occlusion(mesh, type, camera_extrinsic=None, camera_intrinsic=None, win
     depth = viewer.capture_depth_float_buffer(do_render=True)
 
     viewer.destroy_window()
-    pcd = o3d.geometry.PointCloud.create_from_depth_image(depth, camera_parameters.intrinsic,
-                                                          extrinsic=camera_parameters.extrinsic)
+    pcd = o3d.geometry.PointCloud.create_from_depth_image(
+        depth, camera_parameters.intrinsic, extrinsic=camera_parameters.extrinsic
+    )
 
     if downsample_ratio is not None:
         ratio = int((1 - downsample_ratio) / downsample_ratio)
@@ -346,24 +431,44 @@ def core_occlusion(mesh, type, camera_extrinsic=None, camera_intrinsic=None, win
 def rotation(pointcloud, severity):
     N, C = pointcloud.shape
     c = [2.5, 5, 7.5, 10, 15, 20, 25, 30][severity - 1]
-    theta = np.random.uniform(c - 2.5, c + 2.5) * np.random.choice([-1, 1]) * np.pi / 180.
-    gamma = np.random.uniform(c - 2.5, c + 2.5) * np.random.choice([-1, 1]) * np.pi / 180.
-    beta = np.random.uniform(c - 2.5, c + 2.5) * np.random.choice([-1, 1]) * np.pi / 180.
+    theta = (
+        np.random.uniform(c - 2.5, c + 2.5) * np.random.choice([-1, 1]) * np.pi / 180.0
+    )
+    gamma = (
+        np.random.uniform(c - 2.5, c + 2.5) * np.random.choice([-1, 1]) * np.pi / 180.0
+    )
+    beta = (
+        np.random.uniform(c - 2.5, c + 2.5) * np.random.choice([-1, 1]) * np.pi / 180.0
+    )
 
-    matrix_1 = np.array([[1, 0, 0], [0, np.cos(theta), -np.sin(theta)], [0, np.sin(theta), np.cos(theta)]])
-    matrix_2 = np.array([[np.cos(gamma), 0, np.sin(gamma)], [0, 1, 0], [-np.sin(gamma), 0, np.cos(gamma)]])
-    matrix_3 = np.array([[np.cos(beta), -np.sin(beta), 0], [np.sin(beta), np.cos(beta), 0], [0, 0, 1]])
+    matrix_1 = np.array(
+        [
+            [1, 0, 0],
+            [0, np.cos(theta), -np.sin(theta)],
+            [0, np.sin(theta), np.cos(theta)],
+        ]
+    )
+    matrix_2 = np.array(
+        [
+            [np.cos(gamma), 0, np.sin(gamma)],
+            [0, 1, 0],
+            [-np.sin(gamma), 0, np.cos(gamma)],
+        ]
+    )
+    matrix_3 = np.array(
+        [[np.cos(beta), -np.sin(beta), 0], [np.sin(beta), np.cos(beta), 0], [0, 0, 1]]
+    )
 
     new_pc = np.matmul(pointcloud, matrix_1)
     new_pc = np.matmul(new_pc, matrix_2)
-    new_pc = np.matmul(new_pc, matrix_3).astype('float32')
+    new_pc = np.matmul(new_pc, matrix_3).astype("float32")
 
     return normalize(new_pc)
 
 
-'''
+"""
 Shear the point cloud
-'''
+"""
 
 
 def shear(pointcloud, severity):
@@ -377,13 +482,13 @@ def shear(pointcloud, severity):
     g = np.random.uniform(c - 0.05, c + 0.05) * np.random.choice([-1, 1])
 
     matrix = np.array([[1, 0, b], [d, 1, e], [f, 0, 1]])
-    new_pc = np.matmul(pointcloud, matrix).astype('float32')
+    new_pc = np.matmul(pointcloud, matrix).astype("float32")
     return normalize(new_pc)
 
 
-'''
+"""
 Scale the point cloud
-'''
+"""
 
 
 def scale(pointcloud, severity):
@@ -404,14 +509,14 @@ def scale(pointcloud, severity):
         d += c * (-t)
 
     matrix = np.array([[a, 0, 0], [0, b, 0], [0, 0, d]])
-    new_pc = np.matmul(pointcloud, matrix).astype('float32')
+    new_pc = np.matmul(pointcloud, matrix).astype("float32")
     return normalize(new_pc)
 
 
 ### Noise ###
-'''
+"""
 Add Uniform noise to point cloud 
-'''
+"""
 
 
 def uniform_noise(pointcloud, severity):
@@ -419,40 +524,42 @@ def uniform_noise(pointcloud, severity):
     N, C = pointcloud.shape
     c = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08][severity - 1]
     jitter = np.random.uniform(-c, c, (N, C))
-    new_pc = (pointcloud + jitter).astype('float32')
+    new_pc = (pointcloud + jitter).astype("float32")
     return normalize(new_pc)
 
 
-'''
+"""
 Add Gaussian noise to point cloud 
-'''
+"""
 
 
 def gaussian_noise(pointcloud, severity):
     N, C = pointcloud.shape
     c = [0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05][severity - 1]
     jitter = np.random.normal(size=(N, C)) * c
-    new_pc = (pointcloud + jitter).astype('float32')
+    new_pc = (pointcloud + jitter).astype("float32")
     new_pc = np.clip(new_pc, -1, 1)
     return new_pc
 
 
-'''
+"""
 Add noise to the edge-length-2 cude
-'''
+"""
 
 
 def background_noise(pointcloud, severity):
     N, C = pointcloud.shape
-    c = [N // 45, N // 40, N // 35, N // 30, N // 20, N // 15, N // 10, N // 5][severity - 1]
+    c = [N // 45, N // 40, N // 35, N // 30, N // 20, N // 15, N // 10, N // 5][
+        severity - 1
+    ]
     jitter = np.random.uniform(-1, 1, (c, C))
-    new_pc = np.concatenate((pointcloud, jitter), axis=0).astype('float32')
+    new_pc = np.concatenate((pointcloud, jitter), axis=0).astype("float32")
     return normalize(new_pc)
 
 
-'''
+"""
 Upsampling
-'''
+"""
 
 
 def upsampling(pointcloud, severity):
@@ -464,74 +571,99 @@ def upsampling(pointcloud, severity):
         index = np.random.choice(ORIG_NUM, c, replace=False)
 
     add = pointcloud[index] + np.random.uniform(-0.05, 0.05, (c, C))
-    new_pc = np.concatenate((pointcloud, add), axis=0).astype('float32')
+    new_pc = np.concatenate((pointcloud, add), axis=0).astype("float32")
     return normalize(new_pc)
 
 
-'''
+"""
 Add impulse noise
-'''
+"""
 
 
 def impulse_noise(pointcloud, severity):
     N, C = pointcloud.shape
-    c = [N // 30, N // 25, N // 20, N // 15, N // 10, N // 8, N // 6, N // 4][severity - 1]
+    c = [N // 30, N // 25, N // 20, N // 15, N // 10, N // 8, N // 6, N // 4][
+        severity - 1
+    ]
     index = np.random.choice(ORIG_NUM, c, replace=False)
     pointcloud[index] += np.random.choice([-1, 1], size=(c, C)) * 0.1
     return normalize(pointcloud)
 
 
 ### Point Number Modification ###
-'''
+"""
 Cutout several part in the point cloud
-'''
+"""
 
 
 def cutout(pointcloud, severity):
     N, C = pointcloud.shape
-    c = [(2, 30), (3, 30), (5, 30), (7, 30), (10, 30), (15, 30), (20, 30), (25, 30)][severity - 1]
+    c = [(2, 30), (3, 30), (5, 30), (7, 30), (10, 30), (15, 30), (20, 30), (25, 30)][
+        severity - 1
+    ]
     for _ in range(c[0]):
         i = np.random.choice(pointcloud.shape[0], 1)
         picked = pointcloud[i]
         dist = np.sum((pointcloud - picked) ** 2, axis=1, keepdims=True)
-        idx = np.argpartition(dist, c[1], axis=0)[:c[1]]
+        idx = np.argpartition(dist, c[1], axis=0)[: c[1]]
         pointcloud = np.delete(pointcloud, idx.squeeze(), axis=0)
     return pointcloud
 
 
-'''
+"""
 Uniformly sampling the point cloud
-'''
+"""
 
 
 def uniform_sampling(pointcloud, severity):
     N, C = pointcloud.shape
-    c = [N // 15, N // 10, N // 8, N // 6, N // 2, 3 * N // 4, 5 * N // 6, 7 * N // 8, 9 * N // 10][severity - 1]
+    c = [
+        N // 15,
+        N // 10,
+        N // 8,
+        N // 6,
+        N // 2,
+        3 * N // 4,
+        5 * N // 6,
+        7 * N // 8,
+        9 * N // 10,
+    ][severity - 1]
     index = np.random.choice(ORIG_NUM, ORIG_NUM - c, replace=False)
     return pointcloud[index]
 
 
-'''
+"""
 Density-based up-sampling the point cloud
-'''
+"""
 
 
 def density_inc(pointcloud, severity):
     N, C = pointcloud.shape
-    c = [(1, 100), (2, 100), (3, 100), (4, 100), (5, 100), (6, 100), (7, 100), (8, 100)][severity - 1]
+    c = [
+        (1, 100),
+        (2, 100),
+        (3, 100),
+        (4, 100),
+        (5, 100),
+        (6, 100),
+        (7, 100),
+        (8, 100),
+    ][severity - 1]
     # idx = np.random.choice(N,c[0])
     temp = []
     for _ in range(c[0]):
         i = np.random.choice(pointcloud.shape[0], 1)
         picked = pointcloud[i]
         dist = np.sum((pointcloud - picked) ** 2, axis=1, keepdims=True)
-        idx = np.argpartition(dist, c[1], axis=0)[:c[1]]
+        idx = np.argpartition(dist, c[1], axis=0)[: c[1]]
         # idx_2 = np.random.choice(c[1],int((3/4) * c[1]),replace=False)
         # idx = idx[idx_2]
         temp.append(pointcloud[idx.squeeze()])
         pointcloud = np.delete(pointcloud, idx.squeeze(), axis=0)
 
-    idx = np.random.choice(pointcloud.shape[0], int(round((ORIG_NUM / 2) - c[0] * c[1])))
+    idx = np.random.choice(
+        pointcloud.shape[0], int(round((ORIG_NUM / 2) - c[0] * c[1]))
+    )
     temp.append(pointcloud[idx.squeeze()])
 
     pointcloud = np.concatenate(temp)
@@ -539,19 +671,28 @@ def density_inc(pointcloud, severity):
     return pointcloud
 
 
-'''
+"""
 Density-based sampling the point cloud
-'''
+"""
 
 
 def density(pointcloud, severity):
     N, C = pointcloud.shape
-    c = [(1, 100), (2, 100), (3, 100), (4, 100), (5, 100), (6, 100), (7, 100), (8, 100)][severity - 1]
+    c = [
+        (1, 100),
+        (2, 100),
+        (3, 100),
+        (4, 100),
+        (5, 100),
+        (6, 100),
+        (7, 100),
+        (8, 100),
+    ][severity - 1]
     for _ in range(c[0]):
         i = np.random.choice(pointcloud.shape[0], 1)
         picked = pointcloud[i]
         dist = np.sum((pointcloud - picked) ** 2, axis=1, keepdims=True)
-        idx = np.argpartition(dist, c[1], axis=0)[:c[1]]
+        idx = np.argpartition(dist, c[1], axis=0)[: c[1]]
         idx_2 = np.random.choice(c[1], int((3 / 4) * c[1]), replace=False)
         idx = idx[idx_2]
         pointcloud = np.delete(pointcloud, idx.squeeze(), axis=0)
@@ -569,16 +710,38 @@ def ffd_distortion(pointcloud, severity):
 
 def rbf_distortion(pointcloud, severity):
     N, C = pointcloud.shape
-    c = [(0.025, 5), (0.05, 5), (0.075, 5), (0.1, 5), (0.125, 5), (0.15, 5), (0.175, 5), (0.2, 5)][severity - 1]
-    new_pc = distortion_2(pointcloud, severity=c, func='multi_quadratic_biharmonic_spline')
-    return normalize(new_pc).astype('float32')
+    c = [
+        (0.025, 5),
+        (0.05, 5),
+        (0.075, 5),
+        (0.1, 5),
+        (0.125, 5),
+        (0.15, 5),
+        (0.175, 5),
+        (0.2, 5),
+    ][severity - 1]
+    new_pc = distortion_2(
+        pointcloud, severity=c, func="multi_quadratic_biharmonic_spline"
+    )
+    return normalize(new_pc).astype("float32")
 
 
 def rbf_distortion_inv(pointcloud, severity):
     N, C = pointcloud.shape
-    c = [(0.025, 5), (0.05, 5), (0.075, 5), (0.1, 5), (0.125, 5), (0.15, 5), (0.175, 5), (0.2, 5)][severity - 1]
-    new_pc = distortion_2(pointcloud, severity=c, func='inv_multi_quadratic_biharmonic_spline')
-    return normalize(new_pc).astype('float32')
+    c = [
+        (0.025, 5),
+        (0.05, 5),
+        (0.075, 5),
+        (0.1, 5),
+        (0.125, 5),
+        (0.15, 5),
+        (0.175, 5),
+        (0.2, 5),
+    ][severity - 1]
+    new_pc = distortion_2(
+        pointcloud, severity=c, func="inv_multi_quadratic_biharmonic_spline"
+    )
+    return normalize(new_pc).astype("float32")
 
 
 def occlusion(severity):
@@ -589,19 +752,37 @@ def occlusion(severity):
     for mesh in meshes_sorted:
         original_data = load_mesh(mesh)
 
-        new_pc = occlusion_1(original_data, 'occlusion', severity, n_points=ORIG_NUM)
+        new_pc = occlusion_1(original_data, "occlusion", severity, n_points=ORIG_NUM)
 
-        theta = -np.pi / 2.
+        theta = -np.pi / 2.0
         gamma = 0
         beta = np.pi
 
-        matrix_1 = np.array([[1, 0, 0], [0, np.cos(theta), -np.sin(theta)], [0, np.sin(theta), np.cos(theta)]])
-        matrix_2 = np.array([[np.cos(gamma), 0, np.sin(gamma)], [0, 1, 0], [-np.sin(gamma), 0, np.cos(gamma)]])
-        matrix_3 = np.array([[np.cos(beta), -np.sin(beta), 0], [np.sin(beta), np.cos(beta), 0], [0, 0, 1]])
+        matrix_1 = np.array(
+            [
+                [1, 0, 0],
+                [0, np.cos(theta), -np.sin(theta)],
+                [0, np.sin(theta), np.cos(theta)],
+            ]
+        )
+        matrix_2 = np.array(
+            [
+                [np.cos(gamma), 0, np.sin(gamma)],
+                [0, 1, 0],
+                [-np.sin(gamma), 0, np.cos(gamma)],
+            ]
+        )
+        matrix_3 = np.array(
+            [
+                [np.cos(beta), -np.sin(beta), 0],
+                [np.sin(beta), np.cos(beta), 0],
+                [0, 0, 1],
+            ]
+        )
 
         new_pc = np.matmul(new_pc, matrix_1)
         new_pc = np.matmul(new_pc, matrix_2)
-        new_pc = normalize(np.matmul(new_pc, matrix_3).astype('float32'))
+        new_pc = normalize(np.matmul(new_pc, matrix_3).astype("float32"))
 
         visualize_point_cloud(new_pc)
 
@@ -623,20 +804,31 @@ def simulate_lidar(pointcloud, pose, severity):
     pose[3, [0, 1, 2]] = -pose[3, [0, 1, 2]]
     #####################################
 
-    pointcloud_new = np.concatenate([pointcloud, np.ones((pointcloud.shape[0], 1))], axis=1)
+    pointcloud_new = np.concatenate(
+        [pointcloud, np.ones((pointcloud.shape[0], 1))], axis=1
+    )
     pointcloud_new = np.dot(pointcloud_new, pose)
 
     pointcloud_new = appendSpherical_np(pointcloud_new[:, :3])
-    delta = 1. * np.pi / 180.
+    delta = 1.0 * np.pi / 180.0
     cur = np.min(pointcloud_new[:, 4])
 
     new_pc = []
 
     while cur + delta < np.max(pointcloud_new[:4]):
-        pointcloud_new[(pointcloud_new[:, 4] >= cur + delta / 4) & (
-                pointcloud_new[:, 4] < cur + delta * 3 / 4), 4] = cur + delta / 2.
+        pointcloud_new[
+            (pointcloud_new[:, 4] >= cur + delta / 4)
+            & (pointcloud_new[:, 4] < cur + delta * 3 / 4),
+            4,
+        ] = (
+            cur + delta / 2.0
+        )
         new_pc.append(
-            pointcloud_new[(pointcloud_new[:, 4] >= cur + delta / 4) & (pointcloud_new[:, 4] < cur + delta * 3 / 4)])
+            pointcloud_new[
+                (pointcloud_new[:, 4] >= cur + delta / 4)
+                & (pointcloud_new[:, 4] < cur + delta * 3 / 4)
+            ]
+        )
         cur += delta
 
     new_pc = np.concatenate(new_pc, axis=0)
@@ -660,20 +852,40 @@ def lidar(severity):
         original_data = load_mesh(mesh)
         new_pc = np.empty(0)
         while new_pc.shape[0] == 0:
-            new_pc, pose = occlusion_1(original_data, 'lidar', severity, n_points=ORIG_NUM)
+            new_pc, pose = occlusion_1(
+                original_data, "lidar", severity, n_points=ORIG_NUM
+            )
             new_pc = simulate_lidar(new_pc, pose, severity)
 
-        theta = -np.pi / 2.
+        theta = -np.pi / 2.0
         gamma = 0
         beta = np.pi
 
-        matrix_1 = np.array([[1, 0, 0], [0, np.cos(theta), -np.sin(theta)], [0, np.sin(theta), np.cos(theta)]])
-        matrix_2 = np.array([[np.cos(gamma), 0, np.sin(gamma)], [0, 1, 0], [-np.sin(gamma), 0, np.cos(gamma)]])
-        matrix_3 = np.array([[np.cos(beta), -np.sin(beta), 0], [np.sin(beta), np.cos(beta), 0], [0, 0, 1]])
+        matrix_1 = np.array(
+            [
+                [1, 0, 0],
+                [0, np.cos(theta), -np.sin(theta)],
+                [0, np.sin(theta), np.cos(theta)],
+            ]
+        )
+        matrix_2 = np.array(
+            [
+                [np.cos(gamma), 0, np.sin(gamma)],
+                [0, 1, 0],
+                [-np.sin(gamma), 0, np.cos(gamma)],
+            ]
+        )
+        matrix_3 = np.array(
+            [
+                [np.cos(beta), -np.sin(beta), 0],
+                [np.sin(beta), np.cos(beta), 0],
+                [0, 0, 1],
+            ]
+        )
 
         new_pc = np.matmul(new_pc, matrix_1)
         new_pc = np.matmul(new_pc, matrix_2)
-        new_pc = np.matmul(new_pc, matrix_3).astype('float32')
+        new_pc = np.matmul(new_pc, matrix_3).astype("float32")
 
         pointcloud.append(new_pc)
 
@@ -687,8 +899,8 @@ def load_data(args):
     data = []
     labels = []
 
-    if args.dataset == "scanobjectnn":
-        dir = args.main_path + args.dataset + "/h5_files/main_split/"
+    if args.dataset == "scanobject":
+        dir = args.main_path + args.dataset + "/main_split/"
         test_path = os.path.join(dir, "test_objectdataset.h5")
 
         test_h5 = h5py.File(test_path, "r")
@@ -706,8 +918,11 @@ def load_data(args):
         #     test_h5 = h5py.File(test_path, "r")
         # data.append(test_h5["data"][:])
         # labels.append(test_h5["label"][:])
-        base_path = args.main_path + "ModelNet/modelnet40_normal_resampled/modelnet40_test_8192pts_fps.dat"
-        with open(base_path, 'rb') as f:
+        base_path = (
+            args.main_path
+            + "ModelNet/modelnet40_normal_resampled/modelnet40_test_8192pts_fps.dat"
+        )
+        with open(base_path, "rb") as f:
             data, labels = pickle.load(f)
 
         final_data = list()
@@ -719,8 +934,8 @@ def load_data(args):
         data = np.stack(final_data)
         labels = np.squeeze(np.stack(labels))
 
-    if args.dataset == 'shapenet':
-        all_paths = get_path(args.dataset_path, 'test')[0]
+    if args.dataset == "shapenet":
+        all_paths = get_path(args.dataset_path, "test")[0]
         data, labels, _ = load_h5py(all_paths)
         # all_data = np.concatenate(all_data, axis=0)
         # all_label = np.concatenate(all_label, axis=0)
@@ -748,14 +963,30 @@ def save_data(args, data, corruption, severity, txt_file=None):
         new_data = np.stack(new_data, axis=0)
 
     if args.dataset != "partnet":
-        np.save(args.corrupted_dataset_path + "/data_" + corruption + "_" + str(severity) + ".npy", new_data)
+        np.save(
+            args.corrupted_dataset_path
+            + "/data_"
+            + corruption
+            + "_"
+            + str(severity)
+            + ".npy",
+            new_data,
+        )
     else:
         for index, pc in enumerate(new_data):
-            path = args.corrupted_dataset_path + "/data_" + corruption + "_" + str(severity) + "/" + txt_file[index]
+            path = (
+                args.corrupted_dataset_path
+                + "/data_"
+                + corruption
+                + "_"
+                + str(severity)
+                + "/"
+                + txt_file[index]
+            )
             cut_pos = path.rfind("/")
-            if not os.path.exists(path[: cut_pos]):
-                os.makedirs(path[: cut_pos])
-            np.savetxt(path, pc, fmt='%10.6f')
+            if not os.path.exists(path[:cut_pos]):
+                os.makedirs(path[:cut_pos])
+            np.savetxt(path, pc, fmt="%10.6f")
 
 
 def create_data_partnet(args, data, corruption, severity):
@@ -765,13 +996,14 @@ def create_data_partnet(args, data, corruption, severity):
 
 def load_h5py(path):
     import h5py
+
     all_data = []
     all_label = []
     all_seg = []
     for h5_name in path:
-        f = h5py.File(h5_name, 'r+')
-        data = f['data'][:].astype('float32')
-        label = f['label'][:].astype('int64')
+        f = h5py.File(h5_name, "r+")
+        data = f["data"][:].astype("float32")
+        label = f["label"][:].astype("int64")
         all_data.append(data)
         all_label.append(label)
     return all_data, all_label, all_seg
@@ -779,17 +1011,22 @@ def load_h5py(path):
 
 def get_path(root, type):
     import glob
+
     path_name_all = []
     path_file_all = []
     path_h5py_all = list()
 
-    path_h5py = os.path.join(root, '%s*.h5' % type)
+    path_h5py = os.path.join(root, "%s*.h5" % type)
     paths = glob.glob(path_h5py)
-    paths_sort = [os.path.join(root, type + str(i) + '.h5') for i in range(len(paths))]
+    paths_sort = [os.path.join(root, type + str(i) + ".h5") for i in range(len(paths))]
     path_h5py_all += paths_sort
-    paths_json = [os.path.join(root, type + str(i) + '_id2name.json') for i in range(len(paths))]
+    paths_json = [
+        os.path.join(root, type + str(i) + "_id2name.json") for i in range(len(paths))
+    ]
     path_name_all += paths_json
-    paths_json = [os.path.join(root, type + str(i) + '_id2file.json') for i in range(len(paths))]
+    paths_json = [
+        os.path.join(root, type + str(i) + "_id2file.json") for i in range(len(paths))
+    ]
     path_file_all += paths_json
     return path_h5py_all, path_name_all, path_file_all
 
@@ -798,30 +1035,32 @@ def create_mesh(pcd):
     pcd_o3d = o3d.geometry.PointCloud()
     pcd_o3d.points = o3d.utility.Vector3dVector(pcd)
     pcd_o3d.estimate_normals()
-    mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd_o3d, depth=9)
+    mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+        pcd_o3d, depth=9
+    )
 
     # o3d.visualization.draw_geometries([mesh])
     return mesh
 
 
 MAP = {
-    'uniform': uniform_noise,
-    'gaussian': gaussian_noise,
-    'background': background_noise,
-    'impulse': impulse_noise,
-    'scale': scale,
-    'upsampling': upsampling,
-    'shear': shear,
-    'rotation': rotation,
-    'cutout': cutout,
-    'density': density,
-    'density_inc': density_inc,
-    'distortion': ffd_distortion,
-    'distortion_rbf': rbf_distortion,
-    'distortion_rbf_inv': rbf_distortion_inv,
-    'clean': None,
-    'occlusion': occlusion,
-    'lidar': lidar
+    # 'uniform': uniform_noise,
+    # 'gaussian': gaussian_noise,
+    "background": background_noise,
+    # 'impulse': impulse_noise,
+    # 'scale': scale,
+    # 'upsampling': upsampling,
+    # 'shear': shear,
+    # 'rotation': rotation,
+    # 'cutout': cutout,
+    # 'density': density,
+    # 'density_inc': density_inc,
+    # 'distortion': ffd_distortion,
+    # 'distortion_rbf': rbf_distortion,
+    # 'distortion_rbf_inv': rbf_distortion_inv,
+    # 'clean': None,
+    # 'occlusion': occlusion,
+    # 'lidar': lidar
 }
 
 ORIG_NUM = 4096
@@ -831,26 +1070,30 @@ if __name__ == "__main__":
     if args.dataset == "modelnet40":
         args.dataset_path = args.main_path + "ModelNet/modelnet40_normal_resampled/"
     elif args.dataset == "scanobjectnn":
-        args.dataset_path = args.main_path + "scanobjectnn/h5_files/main_split/"
+        args.dataset_path = args.main_path + "scanobject/main_split/"
     elif args.dataset == "partnet":
-        args.dataset_path = args.main_path + "shapenetcore_partanno_segmentation_benchmark_v0_normal/"
-        with open(args.dataset_path + "train_test_split/shuffled_test_file_list.json", "r") as f:
+        args.dataset_path = (
+            args.main_path + "shapenetcore_partanno_segmentation_benchmark_v0_normal/"
+        )
+        with open(
+            args.dataset_path + "train_test_split/shuffled_test_file_list.json", "r"
+        ) as f:
             cat = json.load(f)
 
-    elif args.dataset == 'shapenet':
+    elif args.dataset == "shapenet":
         args.dataset_path = args.main_path + "shapenetcorev2_hdf5_2048/"
 
     args.corrupted_dataset_path = args.main_path + args.dataset + "_c"
     os.makedirs(args.corrupted_dataset_path, exist_ok=True)
 
-    if args.dataset != 'partnet':
+    if args.dataset != "partnet":
         data, labels = load_data(args)
     else:
         data = []
         path = []
         # all_pc = glob.glob(os.path.join(args.dataset_path, f'{c[11:]}/*.txt'))
         for pc in cat[:10]:
-            p = f'{pc[11:]}.txt'
+            p = f"{pc[11:]}.txt"
             data.append(np.loadtxt(os.path.join(args.dataset_path, p)))
             path.append(p)
     if args.create_mesh:
@@ -863,23 +1106,26 @@ if __name__ == "__main__":
             export_mesh(mesh, mesh_folder + str(index) + ".ply")
 
     for cor in MAP.keys():
-        for sev in [8]:
-            if args.dataset in ["scanobjectnn", "partnet", "shapenet"]:
+        for sev in [3, 7]:
+            if args.dataset in ["scanobject", "partnet", "shapenet"]:
                 ORIG_NUM = 2048
             else:
                 ORIG_NUM = 4096
-            if cor == 'density_inc':
+            if cor == "density_inc":
                 ORIG_NUM *= 2
 
-            if args.dataset != "partnet":
-                index = np.random.choice(data.shape[1], ORIG_NUM, replace=False)
-                data_new = data[:, index, :]
-            else:
-                data_new = []
-                for pc in data:
-                    index = np.random.choice(pc.shape[0], ORIG_NUM, replace=True)
-                    data_new.append(pc[index])
-                data_new = np.stack(data_new)
+            data = np.array(data)
+
+            data_new = data
+            # if args.dataset != "partnet":
+            #     index = np.random.choice(np.array(data).shape[1], ORIG_NUM, replace=False)
+            #     data_new = data[:, index, :]
+            # else:
+            #     data_new = []
+            #     for pc in data:
+            #         index = np.random.choice(pc.shape[0], ORIG_NUM, replace=True)
+            #         data_new.append(pc[index])
+            #     data_new = np.stack(data_new)
 
             save_data(args, data_new, cor, sev)
 
