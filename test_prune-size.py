@@ -106,7 +106,7 @@ def main(args):
         args.BN_reset = True
         methods_dict[args.method](args, config)
 
-    args.selected_corruption = "Distortion"
+    args.selected_corruption = "distortion"
     for i in range(128):
         args.purge_size_list = [i]  # list(range(i+1))
         args.exp_name = f"test_purge_size_{i}_{args.selected_corruption}"
