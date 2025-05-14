@@ -3,14 +3,35 @@ from utils.logger import *
 from utils.config import *
 from tools.tta_purge import runner
 from tools.tta_BFTT3D import runner as runner_BFTT3D
-from tools.tta import tta_tent, tta_rotnet, tta_t3a, tta_shot, tta_dua, eval_source
+from tools.tta import (
+    tta_tent,
+    tta_rotnet,
+    tta_t3a,
+    tta_shot,
+    tta_dua,
+    eval_source,
+    tta_tent_intermediate,
+    eval_source_layer_average,
+    eval_source_all_BN,
+)
+from tools.tta_unclassified import runner as runner_unclassified
+from tools.tta_intermediate import runner as runner_intermediate
+
+# from tools.tta_x import runner as runner_x
+from tools.tta_token_mask import runner as runner_token_mask
+from tools.tta_layer_prune import runner as runner_layer_prune
+from tools.tta_cls_stat import runner as runner_cls_stat
 import time
 import os
 import torch
 from tensorboardX import SummaryWriter
 
+import random, numpy as np
+from tools import builder
+import datasets.tta_datasets as tta_datasets
 
-def main(args):
+
+def prepare_config(args):
     args.use_gpu = torch.cuda.is_available()
     if args.use_gpu:
         torch.backends.cudnn.benchmark = True
@@ -84,40 +105,54 @@ def main(args):
     # args.batch_size = 1
     # config.model.transformer_config.mask_ratio = args.mask_ratio  # overwrite the mask_ratio configuration parameter
     config.model.group_norm = args.group_norm
-
-    methods_dict = {
-        "source_only": eval_source,
-        "prototype_purge": runner,
-        "cls_purge": runner,
-        "bftt3d": runner_BFTT3D,
-        "tent": tta_tent,
-        "rotnet": tta_rotnet,
-        "t3a": tta_t3a,
-        "shot": tta_shot,
-        "dua": tta_dua,
-    }
-
     args.split = "test"
-
-    args.selected_corruption = "background"
-    for i in range(128):
-        args.purge_size_list = [i]  # list(range(i+1))
-        args.exp_name = f"test_purge_size_{i}_{args.selected_corruption}"
-        args.BN_reset = True
-        methods_dict[args.method](args, config)
-
-    args.selected_corruption = "Distortion"
-    for i in range(128):
-        args.purge_size_list = [i]  # list(range(i+1))
-        args.exp_name = f"test_purge_size_{i}_{args.selected_corruption}"
-        args.BN_reset = True
-        methods_dict[args.method](args, config)
-
-    # for i in [2,4,8,16,32,48,64,128]:
-    #     args.batch_size = i
-    #     methods_dict[args.method](args, config)
+    return args, config
 
 
-if __name__ == "__main__":
-    args = parser.get_args()
-    main(args)
+def load_tta_dataset(args, config):
+    # we have 3 choices - every tta_loader returns only point and labels
+    root = config.tta_dataset_path  # being lazy - 1
+
+    if config.dataset.name == "modelnet":
+        if args.corruption == "clean":
+            inference_dataset = tta_datasets.ModelNet_h5(args, root)
+
+        else:
+            inference_dataset = tta_datasets.ModelNet40C(args, root)
+
+    elif config.dataset.name == "scanobject":
+        inference_dataset = tta_datasets.ScanObjectNN(args=args, root=root)
+
+    elif config.dataset.name == "shapenetcore":
+        inference_dataset = tta_datasets.ShapeNetCore(args=args, root=root)
+
+    else:
+        raise NotImplementedError(f"TTA for {args.tta} is not implemented")
+
+    print(f"\n\n Loading data from ::: {root} ::: level ::: {args.severity}\n\n")
+
+    return inference_dataset
+
+
+def load_clean_dataset(args, config):
+    (train_sampler, train_dataloader) = builder.dataset_builder(
+        args, config.dataset.train
+    )
+    return train_dataloader.dataset
+
+
+args, config = prepare_config(parser.get_args())
+
+args.severity = 3
+args.corruption = "lidar"
+
+corrupt_dataset = load_tta_dataset(args, config)
+clean_dataset = load_clean_dataset(args, config)
+
+
+corrupt_point = corrupt_dataset[0][0]
+clean_point = clean_dataset[0][2][0]
+
+
+np.savetxt("corrupt_point.xyz", corrupt_point.cpu().numpy())
+np.savetxt("clean_point.xyz", clean_point.cpu().numpy())
