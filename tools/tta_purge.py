@@ -189,7 +189,7 @@ def generate_intermediate_embeddings(args, config, source_model):
 
 
 @torch.jit.script
-def softmax_entropy(x: torch.Tensor, dim:int=-1) -> torch.Tensor:
+def softmax_entropy(x: torch.Tensor, dim: int = -1) -> torch.Tensor:
     """Entropy of softmax distribution from logits."""
     return -(x.softmax(dim) * x.log_softmax(dim)).sum(dim)
 
@@ -209,14 +209,17 @@ def eval_purge(
             start_time = time.time()
             acc_sliding_window = list()
             acc_avg = list()
-            if args.corruption != "distortion":
-                continue
-                # raise NotImplementedError('Not possible to use tta with clean data, please modify the list above')
+
+            if args.selected_corruption is not None:
+                if args.corruption != args.selected_corruption:
+                    continue
 
             # if corr_id not in [2]:
             #     continue
 
-            if "f_write" not in locals():  # for saving results for easy copying to google sheet
+            if (
+                "f_write" not in locals()
+            ):  # for saving results for easy copying to google sheet
                 f_write = get_writer_to_all_result(
                     args, config, custom_path=resutl_file_path
                 )
@@ -231,19 +234,17 @@ def eval_purge(
             test_pred = []
             test_label = []
             entropy_list = []
-            
-            
+
             base_model = load_base_model(args, config, logger, pretrained=False)
             base_model.load_state_dict(source_model.state_dict())
-            
+
             for idx, (data, labels) in enumerate(tta_loader):
                 # now inferring on this one sample
-                
+
                 # reset batchnorm running stats
-                
+
                 base_model.eval()
-                
-                
+
                 points = data.cuda()
                 labels = labels.cuda()
                 points = [
@@ -254,7 +255,6 @@ def eval_purge(
 
                 labels = [labels for _ in range(args.batch_size_tta)]
                 labels = torch.cat(labels, dim=0)
-                        
 
                 # reset batchnorm running stats
                 if args.BN_reset:
@@ -334,7 +334,13 @@ def eval_purge(
             )
             f_write.write(" ".join([str(round(float(xx), 3)) for xx in [acc]]) + "\n")
             f_write.write(
-                " ".join([str(round(float(xx), 3)) for xx in [torch.cat(entropy_list, dim=0).mean().item()]]) + "\n"
+                " ".join(
+                    [
+                        str(round(float(xx), 3))
+                        for xx in [torch.cat(entropy_list, dim=0).mean().item()]
+                    ]
+                )
+                + "\n"
             )
             f_write.flush()
 
@@ -354,7 +360,7 @@ def eval_purge(
                     )
                     + "\n"
                 )
-                
+
                 f_write.flush()
                 f_write.close()
 
@@ -362,4 +368,3 @@ def eval_purge(
                     f"Final Results Saved at:",
                     resutl_file_path,
                 )
-

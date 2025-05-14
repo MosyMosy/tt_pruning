@@ -228,6 +228,29 @@ def get_args():
         default="source_only",
     )
 
+    parser.add_argument(
+        "--selected_corruption",
+        type=str,
+        choices=[
+            "uniform",
+            "gaussian",
+            "background",
+            "impulse",
+            "upsampling",
+            "distortion_rbf",
+            "distortion_rbf_inv",
+            "density",
+            "density_inc",
+            "shear",
+            "rotation",
+            "cutout",
+            "distortion",
+            "occlusion",
+            "lidar",
+        ],
+        default=None,
+    )
+
     parser.add_argument("--prune_list", nargs="*", type=int, default=[])
     parser.add_argument(
         "--purne_attention",

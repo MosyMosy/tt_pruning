@@ -100,9 +100,24 @@ def main(args):
 
     args.split = "test"
     
-    for i in range(127):
-        args.purge_size_list = [i]
-        args.exp_name = f"test_purge_size_{i}"
+     args.selected_corruption = "background"    
+    for i in range(48):
+        args.purge_size_list = list(range(i+1))
+        args.exp_name = f"test_purge_size_{i}_{args.selected_corruption}"
+        args.BN_reset = True
+        methods_dict[args.method](args, config)
+    
+    args.selected_corruption = "Distortion"    
+    for i in range(48, 127):
+        args.purge_size_list = list(range(i+1))
+        args.exp_name = f"test_purge_size_{i}_{args.selected_corruption}"
+        args.BN_reset = True
+        methods_dict[args.method](args, config)
+        
+    args.selected_corruption = "background"    
+    for i in range(48, 127):
+        args.purge_size_list = list(range(i+1))
+        args.exp_name = f"test_purge_size_{i}_{args.selected_corruption}"
         args.BN_reset = True
         methods_dict[args.method](args, config)
         
