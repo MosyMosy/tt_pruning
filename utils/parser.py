@@ -213,7 +213,7 @@ def get_args():
             "tta_all_BN",
             "tta_cls_stat",
         ],
-        default="tta_cls_stat",
+        default="prototype_purge",
     )
 
     parser.add_argument(
@@ -225,7 +225,7 @@ def get_args():
             "update_tent",
             "update_tent_cls-fixer",
         ],
-        default="update_tent",
+        default="source_only",
     )
 
     parser.add_argument("--prune_list", nargs="*", type=int, default=[])

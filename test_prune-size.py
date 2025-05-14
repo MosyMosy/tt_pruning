@@ -100,13 +100,15 @@ def main(args):
 
     args.split = "test"
     
-    # for i in range(48):
-    #     args.purge_size_list = [i]
-    #     methods_dict[args.method](args, config)
-        
-    for i in [2,4,8,16,32,48,64,128]:
-        args.batch_size = i
+    for i in range(127):
+        args.purge_size_list = [i]
+        args.exp_name = f"test_purge_size_{i}"
+        args.BN_reset = True
         methods_dict[args.method](args, config)
+        
+    # for i in [2,4,8,16,32,48,64,128]:
+    #     args.batch_size = i
+    #     methods_dict[args.method](args, config)
 
 
 if __name__ == "__main__":

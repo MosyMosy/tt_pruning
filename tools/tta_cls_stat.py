@@ -15,6 +15,9 @@ from utils.logger import get_logger, print_log, get_writer_to_all_result
 from utils.misc import corruptions
 
 import datasets.tta_datasets as tta_datasets
+from tqdm import tqdm
+
+from models.Point_MAE import Block, Attention
 
 # =====================
 # Config
@@ -37,6 +40,40 @@ def softmax_entropy(x: torch.Tensor, dim: int = -1) -> torch.Tensor:
 # =====================
 
 
+def generate_source_cls_embeddings(args, config, source_model):
+    def update_stats(x, count, mean):
+        count += 1
+        delta = x - mean
+        mean = mean + delta / count
+        return count, mean
+
+    def finalize_stats(count, mean):
+        if count < 2:
+            # Not enough data points to compute variance
+            return mean
+        return mean
+
+    clean_dataloader = load_clean_dataset(args, config)
+    count = 0
+    mean = torch.zeros(25, 384, dtype=float)
+    for i, (_, _, data) in tqdm(
+        enumerate(clean_dataloader), total=len(clean_dataloader)
+    ):
+        points = data[0].cuda()
+        points = misc.fps(points, config.npoints)
+        with torch.no_grad():
+            intermediates = source_model.forward_source_norm_embeddings(points)
+        intermediates = torch.stack(intermediates, dim=0).flatten(
+            1, 2
+        )  # (num_layers, batch_size * tokens, emb_dim)
+
+        for i in range(intermediates.shape[1]):
+            x = intermediates[:, i]  # x has shape (L, C)
+            count, mean = update_stats(x, count, mean)
+
+    return mean
+
+
 class LayerNormWithClsTransform(nn.LayerNorm):
     def __init__(
         self,
@@ -54,6 +91,9 @@ class LayerNormWithClsTransform(nn.LayerNorm):
 
     def forward(self, input):
         out = super().forward(input)
+        # out = (out - out.mean(dim=-1, keepdim=True)) / (
+        #     out.std(dim=-1, keepdim=True) + self.eps
+        # )
         out = out * self.cls_std + self.cls_mean
         return out
 
@@ -177,6 +217,7 @@ def reset_model(args, config, source_model, cls_norms_embedding):
                 m.track_running_stats = False
                 m.running_mean = None
                 m.running_var = None
+        
 
     return model, optimizer
 
@@ -220,10 +261,10 @@ def eval(args, config, logger, source_model, result_file_path):
     time_list = []
     acc_list = []
 
-    cls_pred, cls_norms_embedding, block_cls_embedding = (
-        source_model.forward_norms_embedding()
-    )
-    block_cls_embedding = torch.stack(block_cls_embedding, dim=0).detach()
+    if False:
+        cls_norms_embedding = generate_source_cls_embeddings(args, config, source_model)
+    else:
+        cls_norms_embedding = source_model.forward_norms_embedding()
 
     for args.severity in level:
         for corr_id, args.corruption in enumerate(corruptions):
@@ -282,7 +323,8 @@ def eval(args, config, logger, source_model, result_file_path):
                     for _ in range(args.grad_steps):
                         logits = base_model(points)
 
-                        loss = -softmax_entropy(logits).mean()
+                        loss = softmax_entropy(logits).mean()
+
                         loss.backward()
                         optimizer.step()
                         optimizer.zero_grad()

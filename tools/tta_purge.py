@@ -209,7 +209,7 @@ def eval_purge(
             start_time = time.time()
             acc_sliding_window = list()
             acc_avg = list()
-            if args.corruption == "clean":
+            if args.corruption != "distortion":
                 continue
                 # raise NotImplementedError('Not possible to use tta with clean data, please modify the list above')
 
@@ -288,8 +288,9 @@ def eval_purge(
                             )
                 logits = torch.cat(logits, dim=1)
                 entropy = softmax_entropy(logits, dim=-1)
-                # entropy_list.append(entropy.mean().cpu())
                 logits = logits[torch.arange(logits.shape[0]), entropy.argmin(dim=-1)]
+                entropy = entropy[torch.arange(logits.shape[0]), entropy.argmin(dim=-1)]
+                entropy_list.append(entropy.cpu())
 
                 target = labels.view(-1)
                 pred = logits.argmax(-1).view(-1)
@@ -332,9 +333,9 @@ def eval_purge(
                 logger=logger,
             )
             f_write.write(" ".join([str(round(float(xx), 3)) for xx in [acc]]) + "\n")
-            # f_write.write(
-            #     " ".join([str(round(float(xx), 3)) for xx in [torch.stack(entropy_list).mean().item()]]) + "\n"
-            # )
+            f_write.write(
+                " ".join([str(round(float(xx), 3)) for xx in [torch.cat(entropy_list, dim=0).mean().item()]]) + "\n"
+            )
             f_write.flush()
 
             if corr_id == len(corruptions) - 1:
