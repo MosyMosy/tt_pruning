@@ -100,7 +100,7 @@ def main(args):
 
     args.split = "test"
     
-     args.selected_corruption = "background"    
+    args.selected_corruption = "background"    
     for i in range(48):
         args.purge_size_list = list(range(i+1))
         args.exp_name = f"test_purge_size_{i}_{args.selected_corruption}"
