@@ -105,7 +105,7 @@ def main(args):
     config.model.group_norm = args.group_norm
 
     methods_dict = {
-        "source_only": eval_source,
+        "source_only": runner,
         "prototype_purge": runner,
         "cls_purge": runner,
         "bftt3d": runner_BFTT3D,

@@ -31,6 +31,18 @@ from tools import builder
 import datasets.tta_datasets as tta_datasets
 
 
+import faiss
+from tqdm import tqdm
+
+import open3d as o3d
+from pytorch3d.ops import sample_farthest_points  # > pip install pytorch3d
+from pytorch3d.ops import knn_points  # fast Chamfer
+
+from typing import Tuple, Any
+
+# ──────────────────────────────────────────────────────────────── #
+
+
 def prepare_config(args):
     args.use_gpu = torch.cuda.is_available()
     if args.use_gpu:
@@ -143,16 +155,140 @@ def load_clean_dataset(args, config):
 
 args, config = prepare_config(parser.get_args())
 
-args.severity = 3
+args.severity = 5
 args.corruption = "lidar"
 
 corrupt_dataset = load_tta_dataset(args, config)
 clean_dataset = load_clean_dataset(args, config)
 
 
-corrupt_point = corrupt_dataset[0][0]
-clean_point = clean_dataset[0][2][0]
+# for i in range(len(corrupt_dataset)):
+#     corrupt_point = corrupt_dataset[0][0]
+#     clean_point = clean_dataset[0][2][0]
+
+#     os.makedirs(
+#         f"lab/visualize/{config.dataset.name}/{args.corruption}/",
+#         exist_ok=True,
+#     )
+#     np.savetxt(
+#         f"lab/visualize/{config.dataset.name}/{args.corruption}/corrupt_point_{i}.xyz",
+#         corrupt_point.cpu().numpy(),
+#     )
+#     np.savetxt(
+#         f"lab/visualize/{config.dataset.name}/clean_point_{i}.xyz",
+#         clean_point.cpu().numpy(),
+#     )
 
 
-np.savetxt("corrupt_point.xyz", corrupt_point.cpu().numpy())
-np.savetxt("clean_point.xyz", clean_point.cpu().numpy())
+# ────────────────────────────────────────────────────────────────
+#  extra deps : pip install open3d faiss-cpu pytorch3d
+# ────────────────────────────────────────────────────────────────
+# FPS + Chamfer
+
+
+def fpfh_descriptor(pc: np.ndarray, voxel: float = 0.03) -> np.ndarray:
+    """36-D = 3 eigen-ratios + mean FPFH (33)."""
+    pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pc.astype(np.float32)))
+    pcd = pcd.voxel_down_sample(voxel)
+    pcd.estimate_normals(
+        o3d.geometry.KDTreeSearchParamHybrid(radius=voxel * 2, max_nn=32)
+    )
+    fpfh = o3d.pipelines.registration.compute_fpfh_feature(
+        pcd,
+        o3d.geometry.KDTreeSearchParamHybrid(radius=voxel * 5, max_nn=100),
+    ).data  # (33,N)
+    fpfh_mean = fpfh.mean(1)
+    pts0 = np.asarray(pcd.points) - pcd.get_center()
+    eig = np.sort(np.linalg.eigvalsh(np.cov(pts0.T)))[::-1]
+    eig = (eig / eig.sum()).astype(np.float32)
+    return np.concatenate([eig, fpfh_mean]).astype(np.float32)
+
+
+@torch.no_grad()
+def chamfer_fast(a_np: np.ndarray, b_np: np.ndarray, K: int = 1024) -> float:
+    """
+    Chamfer distance with PyTorch3D FPS-K subsampling (no in-place slice error).
+    """
+    def fps_downsample(pc: torch.Tensor) -> torch.Tensor:    # pc : (P,3)
+        if pc.size(0) <= K:
+            return pc
+        pc_sub, _ = sample_farthest_points(
+            pc.unsqueeze(0),  # (1,P,3)
+            K=K,
+            random_start_point=True
+        )
+        return pc_sub.squeeze(0)            # → (K,3)
+
+    a = torch.from_numpy(a_np).float().cuda()
+    b = torch.from_numpy(b_np).float().cuda()
+
+    a = fps_downsample(a)
+    b = fps_downsample(b)
+
+    a = a.unsqueeze(0)                      # (1,P,3)
+    b = b.unsqueeze(0)
+
+    d1, _, _ = knn_points(a, b, K=1)
+    d2, _, _ = knn_points(b, a, K=1)
+    return (d1.mean() + d2.mean()).item()
+
+
+# ---------- 2. build clean bank ---------------------------------------
+clean_descs, clean_clouds, clean_labels = [], [], []
+print("Extracting clean descriptors …")
+for sample in tqdm(clean_dataset):
+    pts, lbl = sample[2]
+    pts = pts.cpu().numpy()
+    clean_clouds.append(pts)
+    clean_labels.append(lbl)
+    clean_descs.append(fpfh_descriptor(pts, voxel=0.04))
+clean_descs = np.stack(clean_descs).astype(np.float32)
+clean_labels = np.array(clean_labels)
+
+# build one FAISS index per class
+label_to_index = {}
+d = clean_descs.shape[1]
+for lbl in np.unique(clean_labels):
+    idx = np.where(clean_labels == lbl)[0]
+    index = faiss.IndexFlatL2(d)
+    index.add(clean_descs[idx])
+    label_to_index[lbl] = (index, idx)  # (faiss index, global idxs)
+
+# ---------- 3. scan corrupted set --------------------------------------
+best_per_class = {}  # lbl → (corr_idx, clean_idx, cd)
+corr_clouds = []                                    # ← ADD THIS LIST
+
+print("Searching best matches per class …")
+for j_corr, sample in enumerate(tqdm(corrupt_dataset)):
+    pts_c, lbl_c = sample
+    # pts_c = pts_c.cpu().numpy()
+    corr_clouds.append(pts_c)                       # ← cache here
+
+    if lbl_c not in label_to_index:
+        continue  # label absent in clean set
+
+    desc_c = fpfh_descriptor(pts_c, voxel=0.04)[None, :]
+    index, clean_sub_idx = label_to_index[lbl_c]
+
+    _, nn = index.search(desc_c, 1)  # (1,1)
+    clean_idx_global = clean_sub_idx[int(nn[0, 0])]
+
+    # fine check with Chamfer
+    cd = chamfer_fast(pts_c, clean_clouds[clean_idx_global])
+
+    if (lbl_c not in best_per_class) or (cd < best_per_class[lbl_c][-1]):
+        best_per_class[lbl_c] = (j_corr, clean_idx_global, cd)
+
+# ---------- 4. save results -------------------------------------------
+out_root = f"lab/visualize/{config.dataset.name}/{args.corruption}"
+print("\nSaving best pairs …")
+for lbl, (j_corr, j_clean, cd) in best_per_class.items():
+    cls_dir = f"{out_root}/class_{lbl}"
+    os.makedirs(cls_dir, exist_ok=True)
+
+    # use the cached numpy arrays – no .cpu(), no .numpy() needed
+    np.savetxt(f"{cls_dir}/corrupt_{j_corr}.xyz", corr_clouds[j_corr])
+    np.savetxt(f"{cls_dir}/clean_{j_clean}.xyz",   clean_clouds[j_clean])
+
+    print(f"class {lbl:2d}  ↔  corrupt #{j_corr:5d}  clean #{j_clean:5d}  "
+          f"Chamfer={cd:.6f}")

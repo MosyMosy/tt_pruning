@@ -25,7 +25,13 @@ python main.py --config cfgs/tta_purge/tta_purge_shapenet.yaml --ckpts checkpoin
 
 
 
+python main.py --config cfgs/tta_purge/tta_purge_scanobject_bg.yaml --ckpts checkpoints/scan_object_src_only.pth --method source_only
+python main.py --config cfgs/tta_purge/tta_purge_scanobject_bg.yaml --ckpts checkpoints/scan_object_src_only.pth --method prototype_purge
+python main.py --config cfgs/tta_purge/tta_purge_scanobject_bg.yaml --ckpts checkpoints/scan_object_src_only.pth --method cls_purge
 
+python main.py --config cfgs/tta_purge/tta_purge_scanobject_hd.yaml --ckpts checkpoints/scan_object_src_only.pth --method source_only
+python main.py --config cfgs/tta_purge/tta_purge_scanobject_hd.yaml --ckpts checkpoints/scan_object_src_only.pth --method prototype_purge
+python main.py --config cfgs/tta_purge/tta_purge_scanobject_hd.yaml --ckpts checkpoints/scan_object_src_only.pth --method cls_purge
 
 
 

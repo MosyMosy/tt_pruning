@@ -9,7 +9,7 @@ from utils.misc import *
 import numpy as np
 
 
-level = [5]
+level = [7]
 
 from tqdm import tqdm
 
@@ -64,7 +64,7 @@ def load_tta_dataset(args, config):
 
 def load_clean_dataset(args, config):
     (train_sampler, train_dataloader) = builder.dataset_builder(
-        args, config.dataset.train
+        args, config.dataset.test
     )
     return train_dataloader
 
@@ -99,6 +99,8 @@ def runner(args, config):
     source_model.eval()
 
     if args.method in ["prototype_purge"]:
+        if dataset_name.__contains__("scanobject"):
+            dataset_name = "scanobject"
         clean_intermediates_path = (
             f"intermediate_features/{dataset_name}_clean_intermediates.pth"
         )
@@ -134,6 +136,7 @@ def runner(args, config):
     if args.method in [
         "prototype_purge",
         "cls_purge",
+        "source_only",
     ]:
         eval_purge(
             args,
@@ -205,7 +208,11 @@ def eval_purge(
 ):
     time_list = []
     for args.severity in level:
-        for corr_id, args.corruption in enumerate(corruptions):
+        if config.dataset.name in ["scanobject_bg", "scanobject_hd"]:
+            corruptions_ = [config.dataset.name]
+        else:
+            corruptions_ = corruptions
+        for corr_id, args.corruption in enumerate(corruptions_):
             start_time = time.time()
             acc_sliding_window = list()
             acc_avg = list()
@@ -223,14 +230,17 @@ def eval_purge(
                 f_write = get_writer_to_all_result(
                     args, config, custom_path=resutl_file_path
                 )
-                f_write.write(f"All Corruptions: {corruptions}" + "\n\n")
+                f_write.write(f"All Corruptions: {corruptions_}" + "\n\n")
                 f_write.write(
                     f"TTA Results for Dataset: {config.dataset.name}" + "\n\n"
                 )
                 f_write.write(f"Checkpoint Used: {args.ckpts}" + "\n\n")
                 f_write.write(f"Corruption LEVEL: {args.severity}" + "\n\n")
 
-            tta_loader = load_tta_dataset(args, config)
+            if config.dataset.name in ["scanobject_bg", "scanobject_hd"]:
+                tta_loader = load_clean_dataset(args, config)
+            else:
+                tta_loader = load_tta_dataset(args, config)
             test_pred = []
             test_label = []
             entropy_list = []
@@ -264,32 +274,41 @@ def eval_purge(
                             m.running_var = None  # for original implementation of tent
                 purge_sizes = args.purge_size_list
                 logits = []
-                for i in range(len(purge_sizes)):
-                    if args.method == "prototype_purge":
-                        with torch.no_grad():
-                            logits.append(
-                                base_model.module.forward_prototype_purge(
-                                    points,
-                                    source_stats=(
-                                        clean_intermediates_mean,
-                                        clean_intermediates_std,
-                                    ),
-                                    layer_idx=[0],
-                                    purge_size=purge_sizes[i],
-                                ).unsqueeze(1)
-                            )
-                    elif args.method == "cls_purge":
-                        with torch.no_grad():
-                            logits.append(
-                                base_model.module.forward_cls_purge(
-                                    points,
-                                    purge_size=purge_sizes[i],
-                                ).unsqueeze(1)
-                            )
-                logits = torch.cat(logits, dim=1)
-                entropy = softmax_entropy(logits, dim=-1)
-                logits = logits[torch.arange(logits.shape[0]), entropy.argmin(dim=-1)]
-                entropy = entropy[torch.arange(logits.shape[0]), entropy.argmin(dim=-1)]
+                if args.method != "source_only":
+                    for i in range(len(purge_sizes)):
+                        if args.method == "prototype_purge":
+                            with torch.no_grad():
+                                logits.append(
+                                    base_model.module.forward_prototype_purge(
+                                        points,
+                                        source_stats=(
+                                            clean_intermediates_mean,
+                                            clean_intermediates_std,
+                                        ),
+                                        layer_idx=[0],
+                                        purge_size=purge_sizes[i],
+                                    ).unsqueeze(1)
+                                )
+                        elif args.method == "cls_purge":
+                            with torch.no_grad():
+                                logits.append(
+                                    base_model.module.forward_cls_purge(
+                                        points,
+                                        purge_size=purge_sizes[i],
+                                    ).unsqueeze(1)
+                                )
+                    logits = torch.cat(logits, dim=1)
+                    entropy = softmax_entropy(logits, dim=-1)
+                    logits = logits[
+                        torch.arange(logits.shape[0]), entropy.argmin(dim=-1)
+                    ]
+                    entropy = entropy[
+                        torch.arange(logits.shape[0]), entropy.argmin(dim=-1)
+                    ]
+                else:
+                    with torch.no_grad():
+                        logits = base_model(points)
+                    entropy = softmax_entropy(logits, dim=-1)
                 entropy_list.append(entropy.cpu())
 
                 target = labels.view(-1)
@@ -344,7 +363,7 @@ def eval_purge(
             )
             f_write.flush()
 
-            if corr_id == len(corruptions) - 1:
+            if corr_id == len(corruptions_) - 1:
                 # write min, max, and average, variance,  of times
                 f_write.write(
                     " ".join(

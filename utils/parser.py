@@ -232,6 +232,8 @@ def get_args():
         "--selected_corruption",
         type=str,
         choices=[
+            "scanobject_bg",
+            "scanobject_hd",
             "uniform",
             "gaussian",
             "background",
